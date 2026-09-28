@@ -1,10 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { store } from "$lib/store.svelte.ts";
+  import { isDesktop as desktop, store } from "$lib/store.svelte.ts";
 
-  // Set by the desktop app. Its webview can't use passkeys, so sign-in happens in the system browser
+  // The web app only lands here after signing out. The desktop app signs in through the system browser
   // (window.open is routed there) while this screen polls for the session.
-  const desktop = "gumcordDesktop" in window;
   const POLL_MS = 2000;
   // The server keeps a started sign-in for 10 minutes; start a fresh one a little before that.
   const PREPARED_MAX_AGE_MS = 9 * 60_000;
@@ -42,7 +41,7 @@
     stopPolling();
     error = "";
     if (!desktop) {
-      location.href = "/api/auth/login";
+      store.signIn();
       return;
     }
     const start = prepared;
@@ -91,7 +90,7 @@
 
 <div class="login-wrap">
   <div class="login-box">
-    <div class="login-logo">G</div>
+    <img class="login-logo" src="/icon.svg" alt="" />
     <h1>Gumcord</h1>
 
     {#if pending}
@@ -104,7 +103,7 @@
         <button class="btn-secondary" type="button" onclick={cancel}>Cancel</button>
       </div>
     {:else}
-      <p class="login-sub">Sign in with your PocketID account.</p>
+      <p class="login-sub">{desktop ? "Sign in with your PocketID account." : "You've signed out."}</p>
       <button class="btn-primary" type="button" onclick={signIn}>Sign in</button>
     {/if}
 
@@ -137,16 +136,8 @@
   }
 
   .login-logo {
-    width: 52px;
-    height: 52px;
-    border-radius: 14px;
-    background: #5b40c2;
-    color: #fff;
-    font-weight: 700;
-    font-size: 24px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    width: 56px;
+    height: 56px;
     margin-bottom: 14px;
   }
 

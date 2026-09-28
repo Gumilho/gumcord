@@ -1,6 +1,6 @@
 import {
   ConnectionQuality, DisconnectReason, Room, RoomEvent, Track,
-  type RemoteTrackPublication,
+  type Participant, type RemoteTrackPublication,
 } from "livekit-client";
 import { audioContext, audioRunning, resumeAudio } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
@@ -14,14 +14,21 @@ interface Message {
   attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
-export interface User { id: number; name: string; }
+export interface User { id: number; name: string; avatar: string; }
 // identity is the stable user ID; name is the display name to show.
-export interface VoiceParticipant { identity: string; name: string; muted: boolean; deafened: boolean; }
+export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // track is null until the viewer opts in to watching; loading covers the gap after they do.
 export interface ScreenStream { identity: string; name: string; local: boolean; track: Track | null; loading: boolean; }
 
 // LiveKit has no deafen concept, so each client publishes it as a participant attribute.
 const DEAFENED_ATTR = "deafened";
+// Set from the voice token. Attributes are client-writable, so only pictures from our own store are used.
+const avatarOf = (p: Participant) => (p.attributes.avatar?.startsWith("/files/") ? p.attributes.avatar : "");
+
+// Set by the desktop app. Its webview can't use passkeys, so it signs in through the system browser.
+export const isDesktop = "gumcordDesktop" in window;
+// After signing out, show the sign-in screen instead of going straight back to PocketID.
+const SIGNED_OUT_KEY = "gc_signed_out";
 
 const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
@@ -57,7 +64,7 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUES
 
 const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
   a.length === b.length
-  && a.every((p, i) => p.identity === b[i].identity && p.name === b[i].name
+  && a.every((p, i) => p.identity === b[i].identity && p.name === b[i].name && p.avatar === b[i].avatar
     && p.muted === b[i].muted && p.deafened === b[i].deafened);
 
 const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
@@ -135,17 +142,35 @@ class GumcordStore {
   // API request with a timeout. A 401 means the session ended, which drops back to the login screen.
   async #api(path: string, init: RequestInit = {}, ms?: number) {
     const res = await fetchWithTimeout(`/api${path}`, init, ms);
-    if (res.status === 401 && this.me) void this.#endSession();
+    if (res.status === 401 && this.me) void this.#endSession().then(() => this.#needSignIn());
     return res;
   }
 
   // ── Auth ──────────────────────────────────────────────────
 
+  // No valid session. The web app goes straight to PocketID; the desktop app, and anyone who just
+  // signed out, gets the sign-in screen (which the desktop app needs a click on to open the browser).
+  #needSignIn() {
+    if (!isDesktop && !localStorage.getItem(SIGNED_OUT_KEY)) {
+      location.replace("/api/auth/login");
+      return;
+    }
+    this.signedOut = true;
+  }
+
+  // Web sign-in from the sign-in screen; the desktop flow lives in Login.svelte.
+  signIn() {
+    localStorage.removeItem(SIGNED_OUT_KEY);
+    location.href = "/api/auth/login";
+  }
+
   async logout() {
     await fetchWithTimeout("/api/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem(CHANNEL_KEY);
     localStorage.removeItem(VOICE_KEY);
+    localStorage.setItem(SIGNED_OUT_KEY, "1");
     await this.#endSession();
+    this.signedOut = true;
   }
 
   async #endSession() {
@@ -162,7 +187,6 @@ class GumcordStore {
     this.activeChannel = null;
     this.bootError     = "";
     this.booted        = false;
-    this.signedOut     = true;
   }
 
   // ── Boot ──────────────────────────────────────────────────
@@ -186,11 +210,12 @@ class GumcordStore {
       this.bootError = "Cannot reach server. Is the backend running?";
       return;
     }
-    if (me.status === 401) { this.signedOut = true; return; }
+    if (me.status === 401) { this.#needSignIn(); return; }
     if (!me.ok || !channels.ok) { this.bootError = `Server error (${me.ok ? channels.status : me.status}).`; return; }
 
     this.me        = await me.json();
     this.signedOut = false;
+    localStorage.removeItem(SIGNED_OUT_KEY);
     this.channels  = await channels.json();
     const savedId = Number(localStorage.getItem(CHANNEL_KEY));
     const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
@@ -653,10 +678,14 @@ class GumcordStore {
     const local = r.localParticipant;
     const next: VoiceParticipant[] = [
       // Local state comes from the store so it updates before LiveKit round-trips.
-      { identity: local.identity, name: local.name || local.identity, muted: this.voiceMuted, deafened: this.voiceDeafened },
+      {
+        identity: local.identity, name: local.name || local.identity, avatar: this.me?.avatar ?? "",
+        muted: this.voiceMuted, deafened: this.voiceDeafened,
+      },
       ...Array.from(r.remoteParticipants.values(), (p) => ({
         identity: p.identity,
         name:     p.name || p.identity,
+        avatar:   avatarOf(p),
         // No published mic (never enabled, or permission denied) also counts as muted.
         muted:    !p.isMicrophoneEnabled,
         deafened: p.attributes[DEAFENED_ATTR] === "1",

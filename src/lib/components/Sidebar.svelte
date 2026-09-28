@@ -2,7 +2,7 @@
   import { store, type Channel, type ChannelKind } from "$lib/store.svelte.ts";
   import { ConnectionQuality } from "livekit-client";
   import { tooltip } from "$lib/tooltip.ts";
-  import { initial } from "$lib/avatar.ts";
+  import UserAvatar from "$lib/components/UserAvatar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
 
@@ -213,7 +213,7 @@
             {@const speaking = store.speaking.has(p.identity)}
             <li class="participant" class:speaking>
               <div class="participant-avatar" class:speaking>
-                {initial(p.name)}
+                <UserAvatar name={p.name} src={p.avatar} />
               </div>
               <span class="participant-name">{p.name}</span>
               {#if liveIds.has(p.identity)}
@@ -277,7 +277,7 @@
 
   <!-- Footer -->
   <div class="sidebar-footer">
-    <div class="avatar">{initial(store.me?.name ?? "")}</div>
+    <div class="avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
     <span class="self-name">{store.me?.name}</span>
 
     {#if store.room}

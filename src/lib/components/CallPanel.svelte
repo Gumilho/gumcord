@@ -2,7 +2,8 @@
   import type { Track } from "livekit-client";
   import { store, type ScreenStream, type VoiceParticipant } from "$lib/store.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
-  import { hue, initial } from "$lib/avatar.ts";
+  import { hue } from "$lib/avatar.ts";
+  import UserAvatar from "$lib/components/UserAvatar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
 
@@ -71,7 +72,7 @@
     <div class="tile" class:speaking={store.speaking.has(p.identity)} style="--hue: {hue(p.name)}">
       <!-- Camera video will render here; the avatar is the no-video fallback. -->
       <div class="tile-media">
-        <div class="tile-avatar">{initial(p.name)}</div>
+        <div class="tile-avatar"><UserAvatar name={p.name} src={p.avatar} /></div>
       </div>
       <div class="tile-label">
         <span class="tile-name">{p.name}</span>

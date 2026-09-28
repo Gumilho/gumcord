@@ -46,8 +46,9 @@ var (
 )
 
 type user struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Avatar string `json:"avatar"`
 }
 
 type userCtxKey struct{}
@@ -137,7 +138,7 @@ func sessionUser(r *http.Request) (user, bool) {
 	}
 	u := user{}
 	u.ID, err = strconv.ParseInt(c.Subject, 10, 64)
-	if err != nil || db.QueryRow(`SELECT name FROM users WHERE id = ?`, u.ID).Scan(&u.Name) != nil {
+	if err != nil || db.QueryRow(`SELECT name, avatar FROM users WHERE id = ?`, u.ID).Scan(&u.Name, &u.Avatar) != nil {
 		return user{}, false
 	}
 	return u, true
@@ -267,13 +268,14 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 		Name              string `json:"name"`
 		PreferredUsername string `json:"preferred_username"`
 		Email             string `json:"email"`
+		Picture           string `json:"picture"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		serverError(w, err)
 		return
 	}
 	name := firstNonEmpty(claims.DisplayName, claims.Name, claims.PreferredUsername, strings.Split(claims.Email, "@")[0], "User")
-	u, err := upsertUser(idToken.Subject, name)
+	u, err := upsertUser(idToken.Subject, name, importAvatar(ctx, claims.Picture))
 	if err != nil {
 		serverError(w, err)
 		return
@@ -322,7 +324,7 @@ func handleDevLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name must be 1-32 characters", http.StatusBadRequest)
 		return
 	}
-	u, err := upsertUser("dev:"+strings.ToLower(name), name)
+	u, err := upsertUser("dev:"+strings.ToLower(name), name, "")
 	if err != nil {
 		serverError(w, err)
 		return
@@ -505,8 +507,7 @@ var authTmpl = template.Must(template.New("auth").Parse(`<!doctype html>
     background: #1a1b2e; color: #d4d8f0; font: 14px/1.5 system-ui, sans-serif; }
   main { width: 100%; max-width: 380px; padding: 36px 28px; border: 1px solid #33365a; border-radius: 12px;
     background: #23253a; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
-  .mark { width: 52px; height: 52px; border-radius: 14px; background: #5b40c2; color: #fff; font-size: 24px; font-weight: 700;
-    display: flex; align-items: center; justify-content: center; }
+  .mark { width: 56px; height: 56px; }
   h1 { margin: 0; font-size: 20px; color: #e8eaf6; text-wrap: balance; }
   p { margin: 0; color: #8a90b4; }
   .code { padding: 8px 16px; border-radius: 8px; background: #1a1b2e; color: #e8eaf6; font: 700 24px ui-monospace, monospace; letter-spacing: 0.12em; }
@@ -519,7 +520,7 @@ var authTmpl = template.Must(template.New("auth").Parse(`<!doctype html>
 </head>
 <body>
 <main>
-  <div class="mark">G</div>
+  <img class="mark" src="/icon.svg" alt="">
   <h1>{{.Title}}</h1>
   <p>{{.Message}}</p>
   {{if .Code}}<div class="code">{{.Code}}</div>{{end}}

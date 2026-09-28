@@ -323,13 +323,20 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	type lkClaims struct {
 		Video *videoGrant `json:"video"`
 		Name  string      `json:"name"`
+		// Lets the other clients in the call show this user's picture.
+		Attributes map[string]string `json:"attributes,omitempty"`
 		jwt.RegisteredClaims
+	}
+	var attrs map[string]string
+	if u.Avatar != "" {
+		attrs = map[string]string{"avatar": u.Avatar}
 	}
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, lkClaims{
 		Video: &videoGrant{Room: fmt.Sprintf("channel-%d", body.ChannelID), RoomJoin: true, CanUpdateOwnMetadata: true},
 		// Identity is the stable user ID; the display name can change between logins.
-		Name: u.Name,
+		Name:       u.Name,
+		Attributes: attrs,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    lkAPIKey,
 			Subject:   strconv.FormatInt(u.ID, 10),
