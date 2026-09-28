@@ -7,6 +7,22 @@
 
   onMount(() => { if (store.token) store.boot(); });
   onDestroy(() => store.destroy());
+
+  const SPLASH_MIN_MS = 1000;
+
+  // The splash lives in app.html so it paints before JS; hide it once there's something to show.
+  $effect(() => {
+    if (store.token && !store.booted && !store.bootError) return;
+    const splash = document.getElementById("splash");
+    if (!splash || splash.dataset.hiding) return;
+    splash.dataset.hiding = "1";
+    // performance.now() counts from page navigation, so this is time since the reload started.
+    const wait = Math.max(0, SPLASH_MIN_MS - performance.now());
+    setTimeout(() => {
+      splash.classList.add("hidden");
+      setTimeout(() => splash.remove(), 300);
+    }, wait);
+  });
 </script>
 
 {#if store.token}

@@ -26,6 +26,7 @@ class GumcordStore {
 
   // boot
   bootError = $state("");
+  booted    = $state(false);
 
   // channels + messages
   channels:      Channel[]      = $state([]);
@@ -86,6 +87,7 @@ class GumcordStore {
     this.messages      = [];
     this.activeChannel = null;
     this.bootError     = "";
+    this.booted        = false;
     localStorage.removeItem("gc_token");
     localStorage.removeItem("gc_username");
   }
@@ -110,6 +112,7 @@ class GumcordStore {
     const first = this.channels.find((c) => c.kind === "text");
     if (first) await this.selectChannel(first);
     this.#openWS();
+    this.booted = true;
   }
 
   destroy() {
