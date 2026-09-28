@@ -10,6 +10,14 @@
 
   function initial(name: string) { return name.charAt(0).toUpperCase(); }
 
+  // Starting a share jumps to the call view so you can see what you're sharing; stopping stays put.
+  function shareFromPanel() {
+    if (!store.canScreenShare) return;
+    if (!store.screenSharing) store.mainView = "call";
+    // Called synchronously from the click so the browser still counts it as a user gesture.
+    void store.toggleScreenShare();
+  }
+
   function qualityClass(q: ConnectionQuality) {
     if (q === ConnectionQuality.Poor) return "poor";
     if (q === ConnectionQuality.Lost) return "lost";
@@ -228,6 +236,9 @@
                 {initial(p.identity)}
               </div>
               <span class="participant-name">{p.identity}</span>
+              {#if store.streams.some((s) => s.identity === p.identity)}
+                <span class="live-badge">LIVE</span>
+              {/if}
               {#if p.muted}
                 <span class="status-icon" role="img" aria-label="Muted" use:tooltip={"Muted"}>
                   <VoiceIcon kind="mic" slashed size={16} />
@@ -286,11 +297,28 @@
           {/if}
         </div>
       </div>
-      <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path fill="currentColor" d="M21.33 13.32c-.11 1.03-1.07 1.68-2.07 1.43l-2.73-.68a2.08 2.08 0 0 1-1.57-1.89l-.07-1.3a.63.63 0 0 0-.5-.58 11.58 11.58 0 0 0-4.78 0 .63.63 0 0 0-.5.58l-.07 1.3a2.08 2.08 0 0 1-1.57 1.9l-2.73.67c-1 .25-1.96-.4-2.07-1.43-.2-1.8.23-3.72 2.22-4.9a16.6 16.6 0 0 1 14.82 0c2 1.18 2.43 3.1 2.22 4.9Z" />
-        </svg>
-      </button>
+      <div class="voice-actions">
+        <button
+          class="icon-btn"
+          class:sharing={store.screenSharing}
+          aria-disabled={!store.canScreenShare}
+          aria-pressed={store.screenSharing}
+          aria-label={store.screenSharing ? "Stop sharing" : "Share your screen"}
+          use:tooltip={!store.canScreenShare
+            ? "Screen sharing isn't supported in this window"
+            : store.screenSharing ? "Stop sharing" : "Share your screen"}
+          onclick={shareFromPanel}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path fill="currentColor" fill-rule="evenodd" d="M5 3a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h6v2H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2h6a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H5Zm7 3.5L8.5 10H11v3.5h2V10h2.5L12 6.5Z" />
+          </svg>
+        </button>
+        <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path fill="currentColor" d="M21.33 13.32c-.11 1.03-1.07 1.68-2.07 1.43l-2.73-.68a2.08 2.08 0 0 1-1.57-1.89l-.07-1.3a.63.63 0 0 0-.5-.58 11.58 11.58 0 0 0-4.78 0 .63.63 0 0 0-.5.58l-.07 1.3a2.08 2.08 0 0 1-1.57 1.9l-2.73.67c-1 .25-1.96-.4-2.07-1.43-.2-1.8.23-3.72 2.22-4.9a16.6 16.6 0 0 1 14.82 0c2 1.18 2.43 3.1 2.22 4.9Z" />
+          </svg>
+        </button>
+      </div>
     </div>
   {/if}
 
@@ -601,6 +629,18 @@
 
   .participant.speaking .participant-name { color: #c8cde8; }
 
+  .live-badge {
+    flex-shrink: 0;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #d83c3e;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    line-height: 16px;
+  }
+
   .status-icon {
     display: flex;
     flex-shrink: 0;
@@ -663,6 +703,17 @@
   }
 
   .audio-blocked:hover { text-decoration: underline; }
+
+  .voice-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .icon-btn.sharing { color: #fff; background: #5b40c2; }
+  .icon-btn.sharing:hover { background: #6d50d6; }
+  .icon-btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
+  .icon-btn[aria-disabled="true"]:hover { color: #6b7290; background: none; }
 
   .icon-btn.disconnect,
   .icon-btn.disconnect:hover { color: #c8cde8; }

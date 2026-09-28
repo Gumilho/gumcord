@@ -1,4 +1,7 @@
-import { ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, type RoomOptions } from "livekit-client";
+import {
+  ConnectionQuality, DisconnectReason, Room, RoomEvent, Track,
+  type RemoteTrackPublication, type RoomOptions,
+} from "livekit-client";
 import { API_BASE, LIVEKIT_WS } from "./config.js";
 import { SpeakingDetector } from "./speaking.ts";
 import { playSound, preloadSounds } from "./sounds.ts";
@@ -14,6 +17,8 @@ interface Message {
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
 interface VoiceParticipant { identity: string; speaking: boolean; muted: boolean; deafened: boolean; }
+// track is null until the viewer opts in to watching; loading covers the gap after they do.
+export interface ScreenStream { identity: string; local: boolean; track: Track | null; loading: boolean; }
 
 // LiveKit has no deafen concept, so each client publishes it as a participant attribute.
 const DEAFENED_ATTR = "deafened";
@@ -70,6 +75,10 @@ class GumcordStore {
   room:              Room | null          = $state(null);
   voiceMuted                              = $state(false);
   voiceParticipants: VoiceParticipant[]   = $state([]);
+  // Raw: tracks are LiveKit class instances and must not be proxied.
+  streams:           ScreenStream[]       = $state.raw([]);
+  screenSharing                           = $state(false);
+  readonly canScreenShare                 = typeof navigator.mediaDevices?.getDisplayMedia === "function";
   voiceChannel:      Channel | null       = $state(null);
   voiceQuality:      ConnectionQuality    = $state(ConnectionQuality.Unknown);
   // Mic permission denied or no input device: user can listen but stays muted.
@@ -350,6 +359,9 @@ class GumcordStore {
     const { token: lkToken } = await res.json();
 
     const r = new Room({
+      // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
+      adaptiveStream: true,
+      dynacast: true,
       rtcConfig: {
         iceServers: [{
           urls: `turn:${new URL(API_BASE).hostname}:3478?transport=tcp`,
@@ -398,10 +410,13 @@ class GumcordStore {
       if (pub.source === Track.Source.Microphone && pub.track) {
         this.#speakingDetector.watch(participant.identity, pub.track.mediaStreamTrack);
       }
+      this.#updateParticipants(r);
     });
 
+    // Also fires when the browser's own "Stop sharing" button ends a screen share.
     r.on(RoomEvent.LocalTrackUnpublished, (pub, participant) => {
       if (pub.source === Track.Source.Microphone) this.#speakingDetector.unwatch(participant.identity);
+      this.#updateParticipants(r);
     });
 
     r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
@@ -414,6 +429,8 @@ class GumcordStore {
     });
 
     r.on(RoomEvent.AudioPlaybackStatusChanged, () => this.#syncAudioPlayback(r));
+
+    r.on(RoomEvent.TrackPublished, (pub) => this.#autoSubscribe(pub));
 
     // Keep everyone's mute/deafen indicators current.
     for (const ev of [
@@ -439,13 +456,17 @@ class GumcordStore {
     this.voiceDeafened = prefs.deafened ?? false;
     this.#speakingDetector.prepare();
     try {
-      await r.connect(LIVEKIT_WS, lkToken);
+      // Manual subscriptions: voice is always received, screen shares only once someone chooses to watch.
+      await r.connect(LIVEKIT_WS, lkToken, { autoSubscribe: false });
     } catch (err) {
       this.voiceDeafened = false;
       throw err;
     }
     this.room         = r;
     this.voiceChannel = ch;
+    for (const p of r.remoteParticipants.values()) {
+      for (const pub of p.trackPublications.values()) this.#autoSubscribe(pub);
+    }
     void preloadSounds().then(() => playSound("connect"));
     this.#updateParticipants(r);
     this.#syncAudioPlayback(r);
@@ -515,6 +536,8 @@ class GumcordStore {
     this.audioBlocked      = false;
     this.voiceQuality      = ConnectionQuality.Unknown;
     this.voiceParticipants = [];
+    this.streams           = [];
+    this.screenSharing     = false;
     this.#wantMuted        = false;
     this.#serverSpeaking   = new Set();
     this.#speakingDetector.clear();
@@ -569,6 +592,42 @@ class GumcordStore {
     this.#saveVoiceSession();
   }
 
+  #autoSubscribe(pub: RemoteTrackPublication) {
+    if (pub.source === Track.Source.Microphone) pub.setSubscribed(true);
+  }
+
+  // A share's video and its audio are watched (and downloaded) together.
+  #screenPublications(identity: string) {
+    const p = this.room?.remoteParticipants.get(identity);
+    return [p?.getTrackPublication(Track.Source.ScreenShare), p?.getTrackPublication(Track.Source.ScreenShareAudio)];
+  }
+
+  watchStream(identity: string) {
+    for (const pub of this.#screenPublications(identity)) pub?.setSubscribed(true);
+    if (this.room) this.#updateStreams(this.room);
+  }
+
+  stopWatching(identity: string) {
+    for (const pub of this.#screenPublications(identity)) pub?.setSubscribed(false);
+    if (this.room) this.#updateStreams(this.room);
+  }
+
+  async toggleScreenShare() {
+    if (!this.room || !this.canScreenShare) return;
+    const on = !this.screenSharing;
+    try {
+      await this.room.localParticipant.setScreenShareEnabled(
+        on,
+        // Include tab/system audio where the browser offers it; hide Gumcord's own tab to avoid a mirror loop.
+        on ? { audio: true, systemAudio: "include", selfBrowserSurface: "exclude", surfaceSwitching: "include" } : undefined,
+      );
+    } catch (err) {
+      // Closing the picker rejects with NotAllowedError: a cancel, not a failure.
+      if ((err as Error).name !== "NotAllowedError") console.warn("Screen share failed:", err);
+    }
+    this.#updateParticipants(this.room);
+  }
+
   #speakingNow(): ReadonlySet<string> {
     return this.#speakingDetector.running ? this.#speakingDetector.speaking : this.#serverSpeaking;
   }
@@ -594,6 +653,27 @@ class GumcordStore {
         deafened: p.attributes[DEAFENED_ATTR] === "1",
       })),
     ];
+    this.#updateStreams(r);
+  }
+
+  #updateStreams(r: Room) {
+    const next: ScreenStream[] = [];
+    const localShare = r.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
+    this.screenSharing = !!localShare;
+    if (localShare) next.push({ identity: r.localParticipant.identity, local: true, track: localShare, loading: false });
+    for (const p of r.remoteParticipants.values()) {
+      const pub = p.getTrackPublication(Track.Source.ScreenShare);
+      if (!pub) continue;
+      const track = pub.isSubscribed ? (pub.track ?? null) : null;
+      next.push({ identity: p.identity, local: false, track, loading: pub.isDesired && !track });
+    }
+    // Only replace the array on a real change, so video elements aren't re-rendered on every event.
+    const same = next.length === this.streams.length
+      && next.every((s, i) => {
+        const prev = this.streams[i];
+        return s.identity === prev.identity && s.track === prev.track && s.loading === prev.loading;
+      });
+    if (!same) this.streams = next;
   }
 }
 
