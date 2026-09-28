@@ -10,3 +10,5 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 livekit.yaml
 !livekit.example.yaml
+backend/backend
+backend/*.db
