@@ -19,6 +19,8 @@ export interface User { id: number; name: string; avatar: string; }
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // Someone in a voice channel as the server reports it, for channels you aren't in yourself.
 export interface VoiceMember extends VoiceParticipant { streaming: boolean; }
+// The server polls LiveKit every 2 s, so its list still has you briefly after you leave.
+const JUST_LEFT_MS = 5_000;
 // How loud this user hears another in voice (1 = 100%, up to 2), or whether they've muted them.
 // Local to the listener: the other person isn't affected or told.
 export interface UserAudio { volume: number; muted: boolean; }
@@ -138,6 +140,8 @@ class GumcordStore {
   #wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   #audioEls:     Map<string, HTMLAudioElement> = new Map();
   #userAudioSaves = new Map<string, ReturnType<typeof setTimeout>>();
+  // The channel you just left, where you're hidden until the server's list catches up.
+  #justLeft: { channelId: number; until: number } | null = null;
   // Joining voice waits for this, so nobody is heard at the default volume before their setting loads.
   #userAudioLoaded: Promise<void> = Promise.resolve();
   #fetchAbort:   AbortController | null        = null;
@@ -203,6 +207,7 @@ class GumcordStore {
     this.messages      = [];
     this.userAudio     = new Map();
     this.voiceRooms    = new Map();
+    this.#justLeft     = null;
     this.activeChannel = null;
     this.bootError     = "";
     this.booted        = false;
@@ -388,10 +393,24 @@ class GumcordStore {
 
   #setVoiceRooms(channels: Record<string, VoiceMember[]>) {
     // Avatars are client-set attributes relayed by the server: only use pictures from our own store.
-    this.voiceRooms = new Map(Object.entries(channels).map(([id, members]) => [
+    this.voiceRooms = this.#withoutSelfIfJustLeft(new Map(Object.entries(channels).map(([id, members]) => [
       Number(id),
       members.map((m) => ({ ...m, avatar: m.avatar?.startsWith("/files/") ? m.avatar : "" })),
-    ]));
+    ])), true);
+  }
+
+  // Hides you from the channel you just left until a server update no longer lists you there.
+  #withoutSelfIfJustLeft(rooms: ReadonlyMap<number, VoiceMember[]>, fromServer: boolean) {
+    const left = this.#justLeft;
+    if (!left) return rooms;
+    const me = String(this.me?.id);
+    const members = rooms.get(left.channelId) ?? [];
+    const listed = members.some((m) => m.identity === me);
+    if ((fromServer && !listed) || Date.now() > left.until) {
+      this.#justLeft = null;
+      return rooms;
+    }
+    return listed ? new Map(rooms).set(left.channelId, members.filter((m) => m.identity !== me)) : rooms;
   }
 
   // ── Voice ─────────────────────────────────────────────────
@@ -610,6 +629,10 @@ class GumcordStore {
 
   // Idempotent: runs from leaveVoice and again from the Disconnected event.
   #resetVoice() {
+    if (this.voiceChannel) {
+      this.#justLeft  = { channelId: this.voiceChannel.id, until: Date.now() + JUST_LEFT_MS };
+      this.voiceRooms = this.#withoutSelfIfJustLeft(this.voiceRooms, false);
+    }
     this.#audioEls.forEach((el) => el.remove());
     this.#audioEls.clear();
     this.#speakingDetector.clear();
