@@ -38,6 +38,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login", handleLogin)
 	mux.HandleFunc("GET /channels", guard(handleChannels))
+	mux.HandleFunc("POST /channels", guard(handleCreateChannel))
 	mux.HandleFunc("GET /channels/{id}/messages", guard(handleMessages))
 	mux.HandleFunc("GET /ws", guard(handleWS))
 	mux.HandleFunc("POST /voice/token", guard(handleVoiceToken))
@@ -155,6 +156,31 @@ func handleChannels(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if body.Kind != "text" && body.Kind != "voice" {
+		http.Error(w, "invalid kind", http.StatusBadRequest)
+		return
+	}
+
+	res, err := db.Exec(`INSERT INTO channels (name, kind) VALUES (?, ?)`, strings.TrimSpace(body.Name), body.Kind)
+	if err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	id, _ := res.LastInsertId()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": strings.TrimSpace(body.Name), "kind": body.Kind})
 }
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {

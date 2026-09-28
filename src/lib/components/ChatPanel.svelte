@@ -10,10 +10,11 @@
   });
 
   function formatTime(raw: string) {
-    return new Date(raw.replace(" ", "T") + "Z").toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    if (!raw) return "";
+    // "YYYY-MM-DD HH:MM:SS" → "YYYY-MM-DDTHH:MM:SSZ"; already-ISO strings pass through
+    const iso = raw.includes("T") ? raw : raw.replace(" ", "T") + "Z";
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 </script>
 

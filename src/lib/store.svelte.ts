@@ -133,6 +133,17 @@ class GumcordStore {
     }
   }
 
+  async createChannel(name: string, kind: 'text' | 'voice') {
+    const res = await fetch(`${API_BASE}/channels`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, kind }),
+    });
+    if (!res.ok) return;
+    const ch: Channel = await res.json();
+    this.channels = [...this.channels, ch];
+  }
+
   sendMessage() {
     const content = this.draft.trim();
     if (!content || !this.activeChannel || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
