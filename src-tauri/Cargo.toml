@@ -31,3 +31,7 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Turning on WebRTC in the Linux webview. Pinned like Tauri's own dependency so both use one copy.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0", features = ["v2_38"] }

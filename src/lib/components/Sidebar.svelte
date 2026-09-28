@@ -213,9 +213,9 @@
             {@const speaking = store.speaking.has(p.identity)}
             <li class="participant" class:speaking>
               <div class="participant-avatar" class:speaking>
-                {initial(p.identity)}
+                {initial(p.name)}
               </div>
-              <span class="participant-name">{p.identity}</span>
+              <span class="participant-name">{p.name}</span>
               {#if liveIds.has(p.identity)}
                 <span class="live-badge">LIVE</span>
               {/if}
@@ -277,8 +277,8 @@
 
   <!-- Footer -->
   <div class="sidebar-footer">
-    <div class="avatar">{initial(store.username)}</div>
-    <span class="self-name">{store.username}</span>
+    <div class="avatar">{initial(store.me?.name ?? "")}</div>
+    <span class="self-name">{store.me?.name}</span>
 
     {#if store.room}
       <button

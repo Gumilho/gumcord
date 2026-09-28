@@ -1,38 +1,19 @@
+# Production: `docker compose up -d --build`. Development only needs LiveKit: `docker compose up -d livekit`.
 services:
-  redis:
-    image: redis:7-alpine
+  gumcord:
+    build: .
     restart: unless-stopped
-    volumes:
-      - redis-data:/data
-
-  coturn:
-    image: coturn/coturn:alpine
-    restart: unless-stopped
+    env_file: .env
     ports:
-      - "3478:3478"
-      - "3478:3478/udp"
-    command:
-      - -n
-      - --log-file=stdout
-      - --realm=local
-      - --lt-cred-mech
-      - --fingerprint
-      - --allow-loopback-peers
-      - --user=livekit:turnpass
+      - "8089:8080"
+    volumes:
+      - ./data:/data # database, uploads and session key: back this folder up
 
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.13.7
     command: --config /etc/livekit.yaml
-    ports:
-      - "7880:7880"       # HTTP / WebSocket signalling
-      - "7881:7881"       # TCP RTC fallback
-      - "7882:7882/udp"   # UDP RTC (single-port mode)
+    restart: unless-stopped
+    # Host networking, as LiveKit recommends: media ports 7881/tcp and 7882/udp without Docker's NAT in the way.
+    network_mode: host
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
-    depends_on:
-      - redis
-      - coturn
-    restart: unless-stopped
-
-volumes:
-  redis-data:

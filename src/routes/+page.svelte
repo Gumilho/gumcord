@@ -6,14 +6,14 @@
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import CallPanel from '$lib/components/CallPanel.svelte';
 
-  onMount(() => { if (store.token) store.boot(); });
+  onMount(() => store.boot());
   onDestroy(() => store.destroy());
 
   const SPLASH_MIN_MS = 1000;
 
   // The splash lives in app.html so it paints before JS; hide it once there's something to show.
   $effect(() => {
-    if (store.token && !store.booted && !store.bootError) return;
+    if (!store.booted && !store.bootError && !store.signedOut) return;
     const splash = document.getElementById("splash");
     if (!splash || splash.dataset.hiding) return;
     splash.dataset.hiding = "1";
@@ -26,26 +26,24 @@
   });
 </script>
 
-{#if store.token}
-  {#if store.bootError}
-    <div class="boot-error">
-      <p>{store.bootError}</p>
-      <button onclick={() => store.boot()}>Retry</button>
-    </div>
-  {:else}
-    <div class="app">
-      <Sidebar />
-      <main class="main">
-        {#if store.mainView === "call" && store.room}
-          <CallPanel />
-        {:else}
-          <ChatPanel />
-        {/if}
-      </main>
-    </div>
-  {/if}
-{:else}
+{#if store.bootError}
+  <div class="boot-error">
+    <p>{store.bootError}</p>
+    <button onclick={() => store.boot()}>Retry</button>
+  </div>
+{:else if store.signedOut}
   <Login />
+{:else if store.me}
+  <div class="app">
+    <Sidebar />
+    <main class="main">
+      {#if store.mainView === "call" && store.room}
+        <CallPanel />
+      {:else}
+        <ChatPanel />
+      {/if}
+    </main>
+  </div>
 {/if}
 
 <style>

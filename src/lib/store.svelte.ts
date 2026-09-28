@@ -1,26 +1,24 @@
 import {
   ConnectionQuality, DisconnectReason, Room, RoomEvent, Track,
-  type RemoteTrackPublication, type RoomOptions,
+  type RemoteTrackPublication,
 } from "livekit-client";
-import { API_BASE, LIVEKIT_WS } from "./config.js";
 import { audioContext, audioRunning, resumeAudio } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
 import { playSound, preloadSounds } from "./sounds.ts";
-
-// rtcConfig is valid at runtime but missing from the SDK's exported types
-type RoomOptionsWithRtc = RoomOptions & { rtcConfig?: RTCConfiguration };
 
 export type ChannelKind = "text" | "voice";
 export interface Channel { id: number; name: string; kind: ChannelKind; }
 type AttachmentType = "image" | "file";
 interface Message {
-  id: number; channel_id: number; username: string; content: string; created_at: string;
+  id: number; channel_id: number; author: string; content: string; created_at: string;
   attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
-export interface VoiceParticipant { identity: string; muted: boolean; deafened: boolean; }
+export interface User { id: number; name: string; }
+// identity is the stable user ID; name is the display name to show.
+export interface VoiceParticipant { identity: string; name: string; muted: boolean; deafened: boolean; }
 // track is null until the viewer opts in to watching; loading covers the gap after they do.
-export interface ScreenStream { identity: string; local: boolean; track: Track | null; loading: boolean; }
+export interface ScreenStream { identity: string; name: string; local: boolean; track: Track | null; loading: boolean; }
 
 // LiveKit has no deafen concept, so each client publishes it as a participant attribute.
 const DEAFENED_ATTR = "deafened";
@@ -35,7 +33,14 @@ interface VoicePrefs   { muted: boolean; deafened: boolean; }
 interface VoiceSession extends VoicePrefs { channelId: number; }
 
 const REQUEST_TIMEOUT_MS = 10_000;
+// livekit-client retries some failures forever (e.g. /rtc answering 404), so a join gets a deadline.
+const JOIN_TIMEOUT_MS    = 15_000;
 const UPLOAD_TIMEOUT_MS  = 120_000;
+
+// The app, API and LiveKit share one origin (Vite proxies them in development).
+function wsUrl(path = "") {
+  return `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}${path}`;
+}
 
 // A stalled server should surface as an error, not an endless load.
 async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUEST_TIMEOUT_MS) {
@@ -52,19 +57,17 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUES
 
 const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
   a.length === b.length
-  && a.every((p, i) => p.identity === b[i].identity && p.muted === b[i].muted && p.deafened === b[i].deafened);
+  && a.every((p, i) => p.identity === b[i].identity && p.name === b[i].name
+    && p.muted === b[i].muted && p.deafened === b[i].deafened);
 
 const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
   a.length === b.length
   && a.every((s, i) => s.identity === b[i].identity && s.track === b[i].track && s.loading === b[i].loading);
 
 class GumcordStore {
-  // auth
-  token      = $state(localStorage.getItem("gc_token") ?? "");
-  username   = $state(localStorage.getItem("gc_username") ?? "");
-  loginError = $state("");
-  loginInput = $state("");
-  passInput  = $state("");
+  // auth: the session is an HttpOnly cookie, so the server's answer to /me is the only source of truth
+  me:        User | null = $state(null);
+  signedOut  = $state(false);
 
   // boot
   bootError = $state("");
@@ -129,56 +132,37 @@ class GumcordStore {
     return this.screenSharing ? "Stop sharing" : "Share your screen";
   }
 
-  // Authenticated request: base URL, bearer token and a timeout.
-  #api(path: string, init: RequestInit = {}, ms?: number) {
-    const headers = new Headers(init.headers);
-    headers.set("Authorization", `Bearer ${this.token}`);
-    return fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers }, ms);
+  // API request with a timeout. A 401 means the session ended, which drops back to the login screen.
+  async #api(path: string, init: RequestInit = {}, ms?: number) {
+    const res = await fetchWithTimeout(`/api${path}`, init, ms);
+    if (res.status === 401 && this.me) void this.#endSession();
+    return res;
   }
 
   // ── Auth ──────────────────────────────────────────────────
 
-  async login() {
-    this.loginError = "";
-    let res: Response;
-    try {
-      res = await fetchWithTimeout(`${API_BASE}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: this.loginInput, password: this.passInput }),
-      });
-    } catch {
-      this.loginError = "Cannot reach server.";
-      return;
-    }
-    if (!res.ok) { this.loginError = "Wrong password."; return; }
-
-    const data = await res.json();
-    this.token    = data.token;
-    this.username = this.loginInput;
-    localStorage.setItem("gc_token",    this.token);
-    localStorage.setItem("gc_username", this.username);
-    await this.boot();
+  async logout() {
+    await fetchWithTimeout("/api/auth/logout", { method: "POST" }).catch(() => {});
+    localStorage.removeItem(CHANNEL_KEY);
+    localStorage.removeItem(VOICE_KEY);
+    await this.#endSession();
   }
 
-  async logout() {
+  async #endSession() {
     clearTimeout(this.#wsRetryTimer ?? undefined);
     this.#wsRetryTimer = null;
     this.#wsRetries    = 0;
-    await this.leaveVoice();
+    this.me            = null; // before closing the socket, so it doesn't reconnect
+    // Leave without clearing the saved voice session, so signing back in rejoins.
+    await this.room?.disconnect();
     this.#ws?.close();
     this.#ws           = null;
-    this.token         = "";
-    this.username      = "";
     this.channels      = [];
     this.messages      = [];
     this.activeChannel = null;
     this.bootError     = "";
     this.booted        = false;
-    localStorage.removeItem("gc_token");
-    localStorage.removeItem("gc_username");
-    localStorage.removeItem(CHANNEL_KEY);
-    localStorage.removeItem(VOICE_KEY);
+    this.signedOut     = true;
   }
 
   // ── Boot ──────────────────────────────────────────────────
@@ -195,17 +179,19 @@ class GumcordStore {
   }
 
   async #boot() {
-    let res: Response;
+    let me: Response, channels: Response;
     try {
-      res = await this.#api("/channels");
+      [me, channels] = await Promise.all([this.#api("/me"), this.#api("/channels")]);
     } catch {
       this.bootError = "Cannot reach server. Is the backend running?";
       return;
     }
-    if (res.status === 401) { await this.logout(); return; }
-    if (!res.ok) { this.bootError = `Server error (${res.status}).`; return; }
+    if (me.status === 401) { this.signedOut = true; return; }
+    if (!me.ok || !channels.ok) { this.bootError = `Server error (${me.ok ? channels.status : me.status}).`; return; }
 
-    this.channels = await res.json();
+    this.me        = await me.json();
+    this.signedOut = false;
+    this.channels  = await channels.json();
     const savedId = Number(localStorage.getItem(CHANNEL_KEY));
     const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
               ?? this.channels.find((c) => c.kind === "text");
@@ -224,7 +210,7 @@ class GumcordStore {
     const ch = this.channels.find((c) => c.id === saved.channelId && c.kind === "voice");
     if (!ch) { localStorage.removeItem(VOICE_KEY); return; }
     // Not awaited: the app shouldn't wait on LiveKit before it's usable.
-    this.joinVoice(ch, saved).catch((err) => console.warn("Voice auto-rejoin failed:", err));
+    void this.joinVoice(ch, saved);
   }
 
   #loadVoiceSession(): VoiceSession | null {
@@ -322,10 +308,12 @@ class GumcordStore {
   // ── WebSocket ─────────────────────────────────────────────
 
   #openWS() {
-    if (this.#ws || !this.token) return;
-    this.#ws = new WebSocket(`${API_BASE.replace("http", "ws")}/ws?token=${this.token}`);
+    if (this.#ws || !this.me) return;
+    this.#ws = new WebSocket(wsUrl("/api/ws"));
+    let opened = false;
 
     this.#ws.onopen = () => {
+      opened = true;
       this.#wsRetries = 0; // successful connection resets backoff
     };
 
@@ -339,7 +327,9 @@ class GumcordStore {
 
     this.#ws.onclose = () => {
       this.#ws = null;
-      if (!this.token) return; // logged out — don't reconnect
+      if (!this.me) return; // signed out: don't reconnect
+      // A refused handshake may be an expired session; #api signs out if so.
+      if (!opened) void this.#api("/me").catch(() => {});
       const delay = Math.min(WS_RECONNECT_BASE * 2 ** this.#wsRetries, WS_RECONNECT_MAX);
       this.#wsRetries++;
       this.#wsRetryTimer = setTimeout(() => this.#openWS(), delay);
@@ -369,6 +359,8 @@ class GumcordStore {
     this.#joining = true;
     try {
       await this.#connectVoice(ch, prefs);
+    } catch (err) {
+      console.warn("Couldn't join voice:", err);
     } finally {
       this.#joining = false;
     }
@@ -378,23 +370,13 @@ class GumcordStore {
     const res = await this.#api("/voice/token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ room: ch.name }),
+      body: JSON.stringify({ channel_id: ch.id }),
     });
     if (!res.ok) return;
     const { token: lkToken } = await res.json();
 
-    const r = new Room({
-      // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
-      adaptiveStream: true,
-      dynacast: true,
-      rtcConfig: {
-        iceServers: [{
-          urls: `turn:${new URL(API_BASE).hostname}:3478?transport=tcp`,
-          username: "livekit",
-          credential: "turnpass",
-        }],
-      },
-    } as RoomOptionsWithRtc);
+    // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
+    const r = new Room({ adaptiveStream: true, dynacast: true });
 
     // Discord has separate join/leave sounds for other people; connect/disconnect stand in for them.
     r.on(RoomEvent.ParticipantConnected, () => {
@@ -473,19 +455,25 @@ class GumcordStore {
     // Disconnects we didn't ask for (page unload, network drop) keep the saved session so a refresh rejoins.
     r.on(RoomEvent.Disconnected, (reason) => {
       // Our own leave plays its sound in leaveVoice; page unloads are client-initiated too and stay silent.
-      if (reason !== DisconnectReason.CLIENT_INITIATED) playSound("disconnect");
+      // A join that never connected (this.room isn't set yet) isn't a disconnect either.
+      if (this.room === r && reason !== DisconnectReason.CLIENT_INITIATED) playSound("disconnect");
       this.#resetVoice();
     });
 
     // Set before connecting so tracks subscribed during connect are attached already muted.
     this.voiceDeafened = prefs.deafened ?? false;
     audioContext();
+    // Disconnecting while connecting cancels the attempt and rejects connect().
+    const giveUp = setTimeout(() => void r.disconnect(), JOIN_TIMEOUT_MS);
     try {
       // Manual subscriptions: voice is always received, screen shares only once someone chooses to watch.
-      await r.connect(LIVEKIT_WS, lkToken, { autoSubscribe: false });
+      // LiveKit signalling is routed under /rtc on this same origin.
+      await r.connect(wsUrl(), lkToken, { autoSubscribe: false });
     } catch (err) {
       this.voiceDeafened = false;
       throw err;
+    } finally {
+      clearTimeout(giveUp);
     }
     this.room         = r;
     this.voiceChannel = ch;
@@ -665,9 +653,10 @@ class GumcordStore {
     const local = r.localParticipant;
     const next: VoiceParticipant[] = [
       // Local state comes from the store so it updates before LiveKit round-trips.
-      { identity: local.identity, muted: this.voiceMuted, deafened: this.voiceDeafened },
+      { identity: local.identity, name: local.name || local.identity, muted: this.voiceMuted, deafened: this.voiceDeafened },
       ...Array.from(r.remoteParticipants.values(), (p) => ({
         identity: p.identity,
+        name:     p.name || p.identity,
         // No published mic (never enabled, or permission denied) also counts as muted.
         muted:    !p.isMicrophoneEnabled,
         deafened: p.attributes[DEAFENED_ATTR] === "1",
@@ -680,13 +669,14 @@ class GumcordStore {
   #updateStreams(r: Room | null) {
     if (!r) return;
     const next: ScreenStream[] = [];
-    const localShare = r.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
-    if (localShare) next.push({ identity: r.localParticipant.identity, local: true, track: localShare, loading: false });
+    const local = r.localParticipant;
+    const localShare = local.getTrackPublication(Track.Source.ScreenShare)?.track;
+    if (localShare) next.push({ identity: local.identity, name: local.name || local.identity, local: true, track: localShare, loading: false });
     for (const p of r.remoteParticipants.values()) {
       const pub = p.getTrackPublication(Track.Source.ScreenShare);
       if (!pub) continue;
       const track = pub.isSubscribed ? (pub.track ?? null) : null;
-      next.push({ identity: p.identity, local: false, track, loading: pub.isDesired && !track });
+      next.push({ identity: p.identity, name: p.name || p.identity, local: false, track, loading: pub.isDesired && !track });
     }
     // Only replace on a real change, so video elements aren't re-rendered on every event.
     if (!sameStreams(next, this.streams)) this.streams = next;

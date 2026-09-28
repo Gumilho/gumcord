@@ -11,5 +11,8 @@ vite.config.ts.timestamp-*
 livekit.yaml
 !livekit.example.yaml
 backend/backend
+backend/data/
+/data/
+# From before data moved into data/
 backend/*.db
 backend/uploads/

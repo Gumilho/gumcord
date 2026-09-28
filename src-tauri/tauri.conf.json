@@ -1,21 +1,24 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
+  "productName": "Gumcord",
   "version": "0.1.0",
   "identifier": "com.gumcord.app",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../build"
+    "frontendDist": "https://gumcord.proxy.gumilho.com"
   },
   "app": {
     "windows": [
       {
-        "title": "tauri-app",
-        "width": 800,
-        "height": 600,
-        "backgroundColor": "#1a1b2e"
+        "label": "main",
+        "title": "Gumcord",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 720,
+        "minHeight": 480,
+        "backgroundColor": "#1a1b2e",
+        "create": false
       }
     ],
     "security": {

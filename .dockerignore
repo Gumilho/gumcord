@@ -1,0 +1,13 @@
+.git
+node_modules
+build
+.svelte-kit
+data
+backend/data
+backend/backend
+backend/*.db*
+backend/uploads
+backend/.env
+src-tauri/target
+.env
+livekit.yaml

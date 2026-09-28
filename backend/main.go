@@ -2,15 +2,20 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -19,10 +24,9 @@ import (
 )
 
 var (
-	sharedPassword = envOr("SHARED_PASSWORD", "gumcord")
-	jwtSecret      = []byte(envOr("JWT_SECRET", "change-me-in-production"))
-	lkAPIKey       = envOr("LK_API_KEY", "devkey")
-	lkAPISecret    = envOr("LK_API_SECRET", "")
+	lkAPIKey    = mustEnv("LK_API_KEY")
+	lkAPISecret = mustEnv("LK_API_SECRET")
+	uploadDir   string
 )
 
 func envOr(key, def string) string {
@@ -32,75 +36,70 @@ func envOr(key, def string) string {
 	return def
 }
 
-type ctxKey string
-
-const ctxUsername ctxKey = "username"
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("%s must be set", key)
+	}
+	return v
+}
 
 func main() {
-	initDB()
+	dataDir := envOr("DATA_DIR", "data")
+	uploadDir = filepath.Join(dataDir, "uploads")
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		log.Fatal(err)
 	}
+	initDB(dataDir)
+	initAuth(dataDir)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /login", handleLogin)
-	mux.HandleFunc("GET /channels", guard(handleChannels))
-	mux.HandleFunc("POST /channels", guard(handleCreateChannel))
-	mux.HandleFunc("GET /channels/{id}/messages", guard(handleMessages))
-	mux.HandleFunc("GET /ws", guard(handleWS))
-	mux.HandleFunc("POST /voice/token", guard(handleVoiceToken))
-	mux.HandleFunc("POST /upload", guard(handleUpload))
+	mux.HandleFunc("GET /api/auth/login", handleLogin)
+	mux.HandleFunc("GET /api/auth/callback", handleCallback)
+	mux.HandleFunc("GET /api/auth/dev", handleDevLogin)
+	mux.HandleFunc("POST /api/auth/logout", handleLogout)
+	mux.HandleFunc("POST /api/auth/desktop/start", handleDesktopStart)
+	mux.HandleFunc("POST /api/auth/desktop/approve", handleDesktopApprove)
+	mux.HandleFunc("POST /api/auth/desktop/poll", handleDesktopPoll)
+	mux.HandleFunc("GET /api/me", requireUser(handleMe))
+	mux.HandleFunc("GET /api/channels", requireUser(handleChannels))
+	mux.HandleFunc("POST /api/channels", requireUser(handleCreateChannel))
+	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
+	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
+	mux.HandleFunc("POST /api/voice/token", requireUser(handleVoiceToken))
+	mux.HandleFunc("POST /api/upload", requireUser(handleUpload))
+	mux.HandleFunc("GET /api/", http.NotFound) // keep unknown API paths out of the app fallback
 	mux.Handle("GET /files/", serveUploads())
-
-	log.Println("backend listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
-}
-
-// --- middleware ---
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		w.Header().Set("Access-Control-Allow-Origin", origin)
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// guard validates the JWT from Authorization header or ?token= query param.
-func guard(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		raw := ""
-		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			raw = strings.TrimPrefix(h, "Bearer ")
-		} else if q := r.URL.Query().Get("token"); q != "" {
-			raw = q
-		}
-		if raw == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		claims := &jwt.RegisteredClaims{}
-		tok, err := jwt.ParseWithClaims(raw, claims, func(*jwt.Token) (any, error) {
-			return jwtSecret, nil
-		})
-		if err != nil || !tok.Valid {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		ctx := context.WithValue(r.Context(), ctxUsername, claims.Subject)
-		next(w, r.WithContext(ctx))
+	// In production the backend also serves the built app; in development Vite does.
+	if dir := os.Getenv("STATIC_DIR"); dir != "" {
+		mux.Handle("GET /", serveApp(dir))
 	}
+
+	// Rejects cross-site form posts and fetches, which would otherwise ride the session cookie.
+	csrf := http.NewCrossOriginProtection()
+	if publicURL != "" {
+		if err := csrf.AddTrustedOrigin(publicURL); err != nil {
+			log.Fatalf("PUBLIC_URL: %v", err)
+		}
+	}
+
+	addr := envOr("ADDR", ":8080")
+	srv := &http.Server{Addr: addr, Handler: csrf.Handler(mux), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+	log.Printf("backend listening on %s", addr)
+
+	// Shut down cleanly on stop so SQLite checkpoints its WAL.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(shutdown)
+	db.Close()
 }
 
 // --- helpers ---
@@ -115,6 +114,24 @@ func serverError(w http.ResponseWriter, err error) {
 	http.Error(w, "server error", http.StatusInternalServerError)
 }
 
+// sameOrigin reports whether a browser request comes from our own pages. CrossOriginProtection
+// only covers unsafe methods, and the WebSocket handshake is a GET.
+func sameOrigin(r *http.Request) bool {
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "same-origin", "none":
+		return true
+	case "":
+		// Engines without Fetch Metadata: compare Origin instead. No Origin means not a browser.
+		o := r.Header.Get("Origin")
+		if o == "" || o == publicURL {
+			return true
+		}
+		u, err := url.Parse(o)
+		return err == nil && u.Host == r.Host
+	}
+	return false
+}
+
 type channel struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
@@ -125,7 +142,7 @@ type channel struct {
 type wsMsg struct {
 	ID             int64  `json:"id"`
 	ChannelID      int64  `json:"channel_id"`
-	Username       string `json:"username"`
+	Author         string `json:"author"`
 	Content        string `json:"content"`
 	CreatedAt      string `json:"created_at"`
 	AttachmentURL  string `json:"attachment_url,omitempty"`
@@ -134,39 +151,6 @@ type wsMsg struct {
 
 // --- handlers ---
 
-func handleLogin(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Username == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if body.Password != sharedPassword {
-		http.Error(w, "wrong password", http.StatusUnauthorized)
-		return
-	}
-
-	if _, err := db.Exec(`INSERT OR IGNORE INTO users (username) VALUES (?)`, body.Username); err != nil {
-		serverError(w, err)
-		return
-	}
-
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
-		Subject:   body.Username,
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * 24 * time.Hour)),
-	})
-	signed, err := tok.SignedString(jwtSecret)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-
-	writeJSON(w, map[string]string{"token": signed})
-}
-
 func handleChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`SELECT id, name, kind FROM channels ORDER BY id`)
 	if err != nil {
@@ -174,10 +158,6 @@ func handleChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	if rows.Err() != nil {
-		http.Error(w, "sql error", http.StatusInternalServerError)
-		return
-	}
 
 	out := []channel{}
 	for rows.Next() {
@@ -185,7 +165,6 @@ func handleChannels(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&c.ID, &c.Name, &c.Kind)
 		out = append(out, c)
 	}
-
 	writeJSON(w, out)
 }
 
@@ -214,8 +193,7 @@ func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT m.id, m.channel_id, u.username, m.content, m.created_at,
-		       COALESCE(m.attachment_url, ''), COALESCE(m.attachment_type, '')
+		SELECT m.id, m.channel_id, u.name, m.content, m.created_at, m.attachment_url, m.attachment_type
 		FROM messages m JOIN users u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
@@ -225,15 +203,11 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	if rows.Err() != nil {
-		http.Error(w, "sql error", http.StatusInternalServerError)
-		return
-	}
 
 	msgs := []wsMsg{}
 	for rows.Next() {
 		var m wsMsg
-		rows.Scan(&m.ID, &m.ChannelID, &m.Username, &m.Content, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
+		rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
 		msgs = append(msgs, m)
 	}
 
@@ -245,26 +219,47 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, msgs)
 }
 
-func handleWS(w http.ResponseWriter, r *http.Request) {
-	username := r.Context().Value(ctxUsername).(string)
+const wsPingInterval = 25 * time.Second
 
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true,
-	})
+func handleWS(w http.ResponseWriter, r *http.Request) {
+	u := currentUser(r)
+	if !sameOrigin(r) {
+		http.Error(w, "cross-origin websocket", http.StatusForbidden)
+		return
+	}
+
+	// Origin is checked above; the library's own check compares against Host, which a proxy may rewrite.
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
 	if err != nil {
 		return
 	}
 	defer conn.CloseNow()
 
-	hub.add(conn, username)
+	hub.add(conn)
 	defer hub.remove(conn)
 
-	var userID int64
-	if err := db.QueryRow(`SELECT id FROM users WHERE username = ?`, username).Scan(&userID); err != nil {
-		return
-	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	// Keeps idle connections alive through proxies, and notices dead ones.
+	go func() {
+		t := time.NewTicker(wsPingInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				pingCtx, done := context.WithTimeout(ctx, 10*time.Second)
+				err := conn.Ping(pingCtx)
+				done()
+				if err != nil {
+					conn.CloseNow()
+					return
+				}
+			}
+		}
+	}()
 
-	ctx := r.Context()
 	for {
 		var in struct {
 			ChannelID      int64  `json:"channel_id"`
@@ -288,7 +283,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 
 		msg := wsMsg{
 			ChannelID:      in.ChannelID,
-			Username:       username,
+			Author:         u.Name,
 			Content:        in.Content,
 			AttachmentURL:  in.AttachmentURL,
 			AttachmentType: in.AttachmentType,
@@ -296,7 +291,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		err := db.QueryRow(
 			`INSERT INTO messages (channel_id, user_id, content, attachment_url, attachment_type)
 			 VALUES (?, ?, ?, ?, ?) RETURNING id, created_at`,
-			in.ChannelID, userID, in.Content, in.AttachmentURL, in.AttachmentType,
+			in.ChannelID, u.ID, in.Content, in.AttachmentURL, in.AttachmentType,
 		).Scan(&msg.ID, &msg.CreatedAt)
 		if err != nil {
 			log.Printf("insert message: %v", err)
@@ -307,14 +302,16 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
-	username := r.Context().Value(ctxUsername).(string)
+	u := currentUser(r)
 
 	var body struct {
-		Room string `json:"room"`
+		ChannelID int64 `json:"channel_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	if body.Room == "" {
-		body.Room = "voice"
+	var kind string
+	if err := db.QueryRow(`SELECT kind FROM channels WHERE id = ?`, body.ChannelID).Scan(&kind); err != nil || kind != "voice" {
+		http.Error(w, "no such voice channel", http.StatusNotFound)
+		return
 	}
 
 	type videoGrant struct {
@@ -325,15 +322,20 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	}
 	type lkClaims struct {
 		Video *videoGrant `json:"video"`
+		Name  string      `json:"name"`
 		jwt.RegisteredClaims
 	}
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, lkClaims{
-		Video:     &videoGrant{Room: body.Room, RoomJoin: true, CanUpdateOwnMetadata: true},
-		Issuer:    lkAPIKey,
-		Subject:   username,
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		Video: &videoGrant{Room: fmt.Sprintf("channel-%d", body.ChannelID), RoomJoin: true, CanUpdateOwnMetadata: true},
+		// Identity is the stable user ID; the display name can change between logins.
+		Name: u.Name,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    lkAPIKey,
+			Subject:   strconv.FormatInt(u.ID, 10),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+		},
 	})
 	signed, err := tok.SignedString([]byte(lkAPISecret))
 	if err != nil {
@@ -344,10 +346,41 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"token": signed})
 }
 
-const (
-	uploadDir     = "uploads"
-	maxUploadSize = 25 << 20
-)
+// serveApp serves the built SvelteKit app, falling back to index.html for client-side routes.
+func serveApp(dir string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file := filepath.Join(dir, filepath.FromSlash(path.Clean("/"+r.URL.Path)))
+		if st, err := os.Stat(file); err != nil || st.IsDir() {
+			file = filepath.Join(dir, "index.html")
+		}
+		if strings.HasPrefix(r.URL.Path, "/_app/immutable/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache") // index.html must pick up new builds
+		}
+		http.ServeFile(w, r, file)
+	})
+}
+
+const maxUploadSize = 25 << 20
+
+// Sniffed image types and the extension they're stored under. Anything else is served as a download.
+var imageExts = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/bmp":  ".bmp",
+}
+
+func isImageExt(ext string) bool {
+	for _, e := range imageExts {
+		if e == ext {
+			return true
+		}
+	}
+	return false
+}
 
 // noDirFS disables directory listings on the file server.
 type noDirFS struct{ http.FileSystem }
@@ -364,12 +397,18 @@ func (fs noDirFS) Open(name string) (http.File, error) {
 	return f, nil
 }
 
+// Uploads are public to anyone with the link, like Discord attachments: names are 96 random bits.
 func serveUploads() http.Handler {
 	files := http.StripPrefix("/files/", http.FileServer(noDirFS{http.Dir(uploadDir)}))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Upload names are random and never reused, so a file can be cached forever.
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Uploaded HTML or SVG opened directly must not run as the app: sandbox it and force a download.
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'")
+		if !isImageExt(path.Ext(r.URL.Path)) {
+			w.Header().Set("Content-Disposition", "attachment")
+		}
 		files.ServeHTTP(w, r)
 	})
 }
@@ -398,16 +437,14 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SVG is deliberately not treated as an image: it can carry scripts.
-	kind := "file"
-	if strings.HasPrefix(mime, "image/") {
-		kind = "image"
+	// Images are stored under the extension of their sniffed type, so a file can't be displayed
+	// as an image and served as something else. SVG is never an image here: it can carry scripts.
+	kind, ext := "file", safeExt(header.Filename)
+	if e, ok := imageExts[mime]; ok {
+		kind, ext = "image", e
 	}
 
-	rnd := make([]byte, 12)
-	rand.Read(rnd)
-	name := hex.EncodeToString(rnd) + strings.ToLower(filepath.Ext(header.Filename))
-
+	name := randHex(12) + ext
 	dst, err := os.Create(filepath.Join(uploadDir, name))
 	if err != nil {
 		serverError(w, err)
@@ -425,4 +462,18 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		"type": kind,
 		"name": header.Filename,
 	})
+}
+
+// safeExt keeps a short alphanumeric extension from the original name, or none.
+func safeExt(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if len(ext) < 2 || len(ext) > 10 {
+		return ""
+	}
+	for _, c := range ext[1:] {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return ""
+		}
+	}
+	return ext
 }

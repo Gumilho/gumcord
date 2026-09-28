@@ -31,5 +31,11 @@ export default defineConfig(() => ({
     fs: {
       allow: ["assets"],
     },
+    // In production the app, backend and LiveKit (/rtc) share one origin; proxying keeps dev the same.
+    proxy: {
+      "/api": { target: "http://localhost:8080", ws: true },
+      "/files": "http://localhost:8080",
+      "/rtc": { target: "http://localhost:7880", ws: true },
+    },
   },
 }));

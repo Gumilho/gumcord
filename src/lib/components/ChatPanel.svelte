@@ -1,6 +1,5 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
-  import { API_BASE } from "$lib/config.js";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
 
@@ -70,7 +69,7 @@
     {#each store.messages as msg (msg.id)}
       <div class="message">
         <div class="msg-meta">
-          <span class="msg-author">{msg.username}</span>
+          <span class="msg-author">{msg.author}</span>
           <span class="msg-time">{formatTime(msg.created_at)}</span>
         </div>
         {#if msg.content}
@@ -81,18 +80,18 @@
             class="msg-image-btn"
             type="button"
             aria-label="View image"
-            onclick={() => (viewing = `${API_BASE}${msg.attachment_url}`)}
+            onclick={() => (viewing = msg.attachment_url ?? null)}
           >
             <img
               class="msg-image"
-              src="{API_BASE}{msg.attachment_url}"
+              src={msg.attachment_url}
               alt="attachment"
               loading="lazy"
               onload={onImageLoad}
             />
           </button>
         {:else if msg.attachment_url}
-          <a class="msg-file" href="{API_BASE}{msg.attachment_url}" target="_blank" rel="noreferrer">
+          <a class="msg-file" href={msg.attachment_url} target="_blank" rel="noreferrer">
             <Icon name="file" size={16} />
             {fileName(msg.attachment_url)}
           </a>
@@ -119,7 +118,7 @@
             <div class="tile">
               <div class="tile-media">
                 {#if store.pendingAttachment.type === "image"}
-                  <img src="{API_BASE}{store.pendingAttachment.url}" alt={store.pendingAttachment.name} />
+                  <img src={store.pendingAttachment.url} alt={store.pendingAttachment.name} />
                 {:else}
                   <Icon name="file" size={48} />
                 {/if}

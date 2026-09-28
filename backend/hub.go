@@ -11,14 +11,14 @@ import (
 
 type wsHub struct {
 	mu    sync.Mutex
-	conns map[*websocket.Conn]string // conn → username
+	conns map[*websocket.Conn]struct{}
 }
 
-var hub = &wsHub{conns: make(map[*websocket.Conn]string)}
+var hub = &wsHub{conns: make(map[*websocket.Conn]struct{})}
 
-func (h *wsHub) add(conn *websocket.Conn, username string) {
+func (h *wsHub) add(conn *websocket.Conn) {
 	h.mu.Lock()
-	h.conns[conn] = username
+	h.conns[conn] = struct{}{}
 	h.mu.Unlock()
 }
 

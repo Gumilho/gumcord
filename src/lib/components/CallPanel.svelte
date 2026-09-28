@@ -57,7 +57,7 @@
   }
 
   function streamLabel(s: ScreenStream) {
-    return s.local ? "Your screen" : `${s.identity}'s screen`;
+    return s.local ? "Your screen" : `${s.name}'s screen`;
   }
 </script>
 
@@ -68,13 +68,13 @@
   </header>
 
   {#snippet personTile(p: VoiceParticipant)}
-    <div class="tile" class:speaking={store.speaking.has(p.identity)} style="--hue: {hue(p.identity)}">
+    <div class="tile" class:speaking={store.speaking.has(p.identity)} style="--hue: {hue(p.name)}">
       <!-- Camera video will render here; the avatar is the no-video fallback. -->
       <div class="tile-media">
-        <div class="tile-avatar">{initial(p.identity)}</div>
+        <div class="tile-avatar">{initial(p.name)}</div>
       </div>
       <div class="tile-label">
-        <span class="tile-name">{p.identity}</span>
+        <span class="tile-name">{p.name}</span>
         {#if p.muted}
           <span class="tile-icon" role="img" aria-label="Muted"><VoiceIcon kind="mic" slashed size={16} /></span>
         {/if}
@@ -86,7 +86,7 @@
   {/snippet}
 
   {#snippet streamTile(s: ScreenStream, spotlight: boolean)}
-    <div class="tile stream" class:spotlight style="--hue: {hue(s.identity)}">
+    <div class="tile stream" class:spotlight style="--hue: {hue(s.name)}">
       {#if s.track}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="tile-video" use:attachVideo={s.track} autoplay playsinline muted></video>
@@ -107,7 +107,7 @@
         </div>
       {:else}
         <div class="stream-invite">
-          <span class="stream-invite-text">{s.identity} is live</span>
+          <span class="stream-invite-text">{s.name} is live</span>
           <button class="watch-btn" disabled={s.loading} onclick={() => watch(s)}>
             {s.loading ? "Loading…" : "Watch Stream"}
           </button>

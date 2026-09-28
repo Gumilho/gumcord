@@ -1,16 +1,23 @@
+# LiveKit for Gumcord. Signalling (7880) is reached through the app's own domain at /rtc.
+# Media uses the two ports below, which NetBird forwards as TCP and UDP services on the same numbers.
 port: 7880
 
 rtc:
-  tcp_port: 7881
-  udp_port: 7882
-  use_external_ip: false  # set to true for Milestone 5 (home server)
-  node_ip: 192.168.x.x   # your LAN IP — change to use_external_ip: true for Milestone 5
-
-redis:
-  address: redis:6379
+  udp_port: 7882 # main media port
+  tcp_port: 7881 # fallback for networks that block UDP
+  use_external_ip: false
+  # The address clients send media to: the public IPv4 of the server running NetBird's
+  # reverse proxy in production (never a Cloudflare IP), or this machine's LAN IP in development.
+  node_ip: 203.0.113.10
+  # Production: proxied media arrives over the NetBird interface, so use only that one. Otherwise
+  # LiveKit may tie the advertised address to another interface and drop the proxied packets.
+  interfaces:
+    includes:
+      - wt0
 
 keys:
-  devkey: your-secret-here  # generate with: openssl rand -base64 32
+  # Must match LK_API_KEY / LK_API_SECRET in .env. Generate a secret with: openssl rand -base64 32
+  gumcord: replace-with-a-long-random-secret
 
 logging:
   level: info

@@ -3,15 +3,19 @@ package main
 import (
 	"database/sql"
 	"log"
+	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
 
 var db *sql.DB
 
-func initDB() {
+func initDB(dataDir string) {
 	var err error
-	db, err = sql.Open("sqlite", "gumcord.db")
+	// WAL lets reads run alongside a write; busy_timeout makes concurrent writers wait instead of failing.
+	dsn := "file:" + filepath.Join(dataDir, "gumcord.db") +
+		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	db, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -19,7 +23,8 @@ func initDB() {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS users (
 			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			username   TEXT UNIQUE NOT NULL,
+			subject    TEXT UNIQUE NOT NULL, -- the identity provider's "sub": stable even if name or email change
+			name       TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -30,11 +35,13 @@ func initDB() {
 		);
 
 		CREATE TABLE IF NOT EXISTS messages (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			channel_id INTEGER NOT NULL REFERENCES channels(id),
-			user_id    INTEGER NOT NULL REFERENCES users(id),
-			content    TEXT NOT NULL,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			id              INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel_id      INTEGER NOT NULL REFERENCES channels(id),
+			user_id         INTEGER NOT NULL REFERENCES users(id),
+			content         TEXT NOT NULL,
+			attachment_url  TEXT NOT NULL DEFAULT '',
+			attachment_type TEXT NOT NULL DEFAULT '',
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
 		-- History loads read one channel's newest messages.
@@ -45,8 +52,14 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
 
-	// Additive migrations; errors mean the column already exists.
-	db.Exec(`ALTER TABLE messages ADD COLUMN attachment_url TEXT`)
-	db.Exec(`ALTER TABLE messages ADD COLUMN attachment_type TEXT`)
+// upsertUser records a login, refreshing the display name from the identity provider each time.
+func upsertUser(subject, name string) (user, error) {
+	u := user{Name: name}
+	err := db.QueryRow(`
+		INSERT INTO users (subject, name) VALUES (?, ?)
+		ON CONFLICT(subject) DO UPDATE SET name = excluded.name
+		RETURNING id`, subject, name).Scan(&u.ID)
+	return u, err
 }
