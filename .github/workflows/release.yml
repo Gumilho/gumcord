@@ -1,0 +1,79 @@
+# Builds the desktop app for Linux and Windows and publishes the installers as a GitHub release.
+#
+# To release: bump "version" in src-tauri/tauri.conf.json, commit, then tag and push:
+#   git tag v0.2.0 && git push origin main v0.2.0
+# The tag must be "v" + that version. The release stays a draft until every build has succeeded.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release and upload the installers
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Tag matches the app version
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+
+  build:
+    needs: check-version
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest supported Ubuntu, so the .deb and AppImage run on older distros too.
+        platform: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      # Installs the Tauri CLI. The app itself loads the hosted site, so there's no frontend to bundle.
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Gumcord ${{ github.ref_name }}
+          releaseBody: |
+            **Windows:** download `Gumcord_*_x64-setup.exe` and run it. Windows may warn that the app is unrecognised: choose **More info → Run anyway**.
+            **Linux:** use the `.AppImage` (any distro), the `.deb` (Debian/Ubuntu) or the `.rpm` (Fedora/openSUSE).
+          releaseDraft: true
+          uploadUpdaterJson: false # no auto-updater: the app loads the site, so updates reach it without reinstalling
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

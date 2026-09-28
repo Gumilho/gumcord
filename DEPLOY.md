@@ -75,6 +75,18 @@ The app loads `https://gumcord.proxy.gumilho.com` (`build.frontendDist` in `src-
 - **Building:** run `npm run tauri build` on each OS you ship for. The installers land in `src-tauri/target/release/bundle/`.
 - **Unsigned builds:** Windows SmartScreen and macOS Gatekeeper warn on first launch.
 
+### Releasing through GitHub
+
+`.github/workflows/release.yml` builds the Linux and Windows installers and publishes them as a GitHub release:
+
+1. Bump `"version"` in `src-tauri/tauri.conf.json` (for example to `0.2.0`) and commit.
+2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`. The tag must be `v` plus that version, or the workflow stops.
+3. Wait about 10–15 minutes. The release stays a draft until both builds succeed, then publishes itself.
+
+On a **private** repo, releases are only visible to people with access to the repo. Either add friends as collaborators with read access, or download the installers yourself and share them another way.
+
+You only need a new release when the desktop shell changes. Changes to the web app reach the desktop app as soon as the server is updated.
+
 ## Development
 
 ```sh
