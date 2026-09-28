@@ -345,6 +345,15 @@
     padding-bottom: 8px;
   }
 
+  /* Discord-style thin bar that only appears while hovering the channel list. */
+  .channels::-webkit-scrollbar { width: 8px; }
+  .channels::-webkit-scrollbar-thumb {
+    border-width: 2px;
+    background-color: transparent;
+  }
+  .channels:hover::-webkit-scrollbar-thumb { background-color: #2e3154; }
+  .channels::-webkit-scrollbar-thumb:hover { background-color: #3f4270; }
+
   .section-header {
     display: flex;
     align-items: center;
