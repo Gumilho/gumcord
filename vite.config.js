@@ -27,5 +27,9 @@ export default defineConfig(() => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    // Sound files live in the root `assets/` folder, outside SvelteKit's default serve allow-list.
+    fs: {
+      allow: ["assets"],
+    },
   },
 }));

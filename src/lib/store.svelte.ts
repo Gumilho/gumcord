@@ -1,6 +1,7 @@
-import { ConnectionQuality, Room, RoomEvent, Track, type RoomOptions } from "livekit-client";
+import { ConnectionQuality, DisconnectReason, Room, RoomEvent, Track, type RoomOptions } from "livekit-client";
 import { API_BASE, LIVEKIT_WS } from "./config.js";
 import { SpeakingDetector } from "./speaking.ts";
+import { playSound, preloadSounds } from "./sounds.ts";
 
 // rtcConfig is valid at runtime but missing from the SDK's exported types
 type RoomOptionsWithRtc = RoomOptions & { rtcConfig?: RTCConfiguration };
@@ -166,6 +167,7 @@ class GumcordStore {
     if (text) await this.selectChannel(text);
     this.#openWS();
     this.booted = true;
+    void preloadSounds();
     this.#restoreVoice();
   }
 
@@ -338,8 +340,15 @@ class GumcordStore {
       },
     } as RoomOptionsWithRtc);
 
-    r.on(RoomEvent.ParticipantConnected,    () => this.#updateParticipants(r));
-    r.on(RoomEvent.ParticipantDisconnected, () => this.#updateParticipants(r));
+    // Discord has separate join/leave sounds for other people; connect/disconnect stand in for them.
+    r.on(RoomEvent.ParticipantConnected, () => {
+      playSound("connect");
+      this.#updateParticipants(r);
+    });
+    r.on(RoomEvent.ParticipantDisconnected, () => {
+      playSound("disconnect");
+      this.#updateParticipants(r);
+    });
 
     r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
@@ -399,7 +408,9 @@ class GumcordStore {
     }
 
     // Disconnects we didn't ask for (page unload, network drop) keep the saved session so a refresh rejoins.
-    r.on(RoomEvent.Disconnected, () => {
+    r.on(RoomEvent.Disconnected, (reason) => {
+      // Our own leave plays its sound in leaveVoice; page unloads are client-initiated too and stay silent.
+      if (reason !== DisconnectReason.CLIENT_INITIATED) playSound("disconnect");
       this.#audioEls.forEach((el) => el.remove());
       this.#audioEls.clear();
       this.#resetVoice();
@@ -416,6 +427,7 @@ class GumcordStore {
     }
     this.room         = r;
     this.voiceChannel = ch;
+    void preloadSounds().then(() => playSound("connect"));
     this.#updateParticipants(r);
     this.#syncAudioPlayback(r);
 
@@ -467,6 +479,7 @@ class GumcordStore {
   async leaveVoice() {
     localStorage.removeItem(VOICE_KEY);
     if (!this.room) return;
+    playSound("disconnect");
     this.#audioEls.forEach((el) => el.remove());
     this.#audioEls.clear();
     await this.room.disconnect();
@@ -490,9 +503,11 @@ class GumcordStore {
   async toggleDeafen() {
     if (!this.room) return;
     if (!this.voiceDeafened) {
+      playSound("deafen");
       this.#setIncomingAudio(false);
       if (!this.voiceMuted) await this.#setMic(false);
     } else {
+      playSound("undeafen");
       this.#setIncomingAudio(true);
       if (!this.#wantMuted) await this.#setMic(true);
     }
@@ -522,11 +537,15 @@ class GumcordStore {
   async toggleMute() {
     if (!this.room) return;
     const unmute = this.voiceMuted;
-    this.#wantMuted = !unmute;
     // Unmuting while deafened undeafens too, like Discord.
-    if (unmute && this.voiceDeafened) this.#setIncomingAudio(true);
+    const undeafen = unmute && this.voiceDeafened;
+    this.#wantMuted = !unmute;
+    if (undeafen) this.#setIncomingAudio(true);
     // Retrying on unmute lets it recover if the user grants permission later.
     await this.#setMic(unmute);
+    if (undeafen) playSound("undeafen");
+    else if (!unmute) playSound("mute");
+    else if (!this.voiceMuted) playSound("unmute"); // silent if the mic still couldn't be opened
     this.#saveVoiceSession();
   }
 
