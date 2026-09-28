@@ -207,10 +207,14 @@
       </button>
 
       <!-- Participants -->
-      {#if store.voiceChannel?.id === ch.id && store.voiceParticipants.length > 0}
+      <!-- Your own call uses live LiveKit state; other channels use what the server reports. -->
+      {@const inCall = store.voiceChannel?.id === ch.id}
+      {@const members = inCall ? store.voiceParticipants : (store.voiceRooms.get(ch.id) ?? [])}
+      {#if members.length > 0}
         <ul class="participants">
-          {#each store.voiceParticipants as p (p.identity)}
-            {@const speaking = store.speaking.has(p.identity)}
+          {#each members as p (p.identity)}
+            {@const speaking = inCall && store.speaking.has(p.identity)}
+            {@const live = inCall ? liveIds.has(p.identity) : "streaming" in p && p.streaming}
             {@const mutedByMe = store.userAudioFor(p.identity).muted}
             {@const clickable = !store.isMe(p.identity)}
             <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
@@ -230,7 +234,7 @@
                 <UserAvatar name={p.name} src={p.avatar} />
               </div>
               <span class="participant-name">{p.name}</span>
-              {#if liveIds.has(p.identity)}
+              {#if live}
                 <span class="live-badge">LIVE</span>
               {/if}
               {#if mutedByMe}

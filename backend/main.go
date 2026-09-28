@@ -85,6 +85,11 @@ func main() {
 		}
 	}
 
+	// Stops on SIGINT/SIGTERM: shuts the server down cleanly so SQLite checkpoints its WAL.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go runPresence(ctx)
+
 	addr := envOr("ADDR", ":8080")
 	srv := &http.Server{Addr: addr, Handler: csrf.Handler(mux), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -94,9 +99,6 @@ func main() {
 	}()
 	log.Printf("backend listening on %s", addr)
 
-	// Shut down cleanly on stop so SQLite checkpoints its WAL.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	<-ctx.Done()
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -242,6 +244,10 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	// Who's in voice right now; later changes arrive as broadcasts.
+	if snap := presence.snapshot(); snap != nil {
+		hub.send(conn, snap)
+	}
 	// Keeps idle connections alive through proxies, and notices dead ones.
 	go func() {
 		t := time.NewTicker(wsPingInterval)
@@ -316,37 +322,18 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type videoGrant struct {
-		Room     string `json:"room"`
-		RoomJoin bool   `json:"roomJoin"`
-		// Lets clients publish their own deafen state as a participant attribute.
-		CanUpdateOwnMetadata bool `json:"canUpdateOwnMetadata"`
-	}
-	type lkClaims struct {
-		Video *videoGrant `json:"video"`
-		Name  string      `json:"name"`
-		// Lets the other clients in the call show this user's picture.
-		Attributes map[string]string `json:"attributes,omitempty"`
-		jwt.RegisteredClaims
-	}
 	var attrs map[string]string
 	if u.Avatar != "" {
 		attrs = map[string]string{"avatar": u.Avatar}
 	}
 
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, lkClaims{
+	signed, err := signLiveKit(lkClaims{
 		Video: &videoGrant{Room: fmt.Sprintf("channel-%d", body.ChannelID), RoomJoin: true, CanUpdateOwnMetadata: true},
 		// Identity is the stable user ID; the display name can change between logins.
-		Name:       u.Name,
-		Attributes: attrs,
-		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    lkAPIKey,
-			Subject:   strconv.FormatInt(u.ID, 10),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-		},
-	})
-	signed, err := tok.SignedString([]byte(lkAPISecret))
+		Name:             u.Name,
+		Attributes:       attrs,
+		RegisteredClaims: jwt.RegisteredClaims{Subject: strconv.FormatInt(u.ID, 10)},
+	}, 24*time.Hour)
 	if err != nil {
 		serverError(w, err)
 		return

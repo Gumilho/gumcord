@@ -4,6 +4,11 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      # LiveKit runs on the host network; the backend asks it who is in each voice channel.
+      LIVEKIT_API_URL: http://host.docker.internal:7880
+    extra_hosts:
+      - host.docker.internal:host-gateway
     ports:
       - "8089:8080"
     volumes:

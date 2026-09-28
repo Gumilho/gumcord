@@ -17,6 +17,8 @@ interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; }
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
+// Someone in a voice channel as the server reports it, for channels you aren't in yourself.
+export interface VoiceMember extends VoiceParticipant { streaming: boolean; }
 // How loud this user hears another in voice (1 = 100%, up to 2), or whether they've muted them.
 // Local to the listener: the other person isn't affected or told.
 export interface UserAudio { volume: number; muted: boolean; }
@@ -113,6 +115,8 @@ class GumcordStore {
   streams:           ScreenStream[]       = $state.raw([]);
   // Kept apart from voiceParticipants so a speaking tick doesn't re-render every row.
   speaking:          ReadonlySet<string>  = $state.raw(new Set());
+  // Who is in each voice channel (by channel ID), pushed by the server. Replaced wholesale on change.
+  voiceRooms:        ReadonlyMap<number, VoiceMember[]> = $state.raw(new Map());
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
   userAudio:         ReadonlyMap<string, UserAudio> = $state.raw(new Map());
   // The per-person audio menu, opened by right-clicking someone in the call.
@@ -198,6 +202,7 @@ class GumcordStore {
     this.channels      = [];
     this.messages      = [];
     this.userAudio     = new Map();
+    this.voiceRooms    = new Map();
     this.activeChannel = null;
     this.bootError     = "";
     this.booted        = false;
@@ -358,8 +363,13 @@ class GumcordStore {
     };
 
     this.#ws.onmessage = (e) => {
-      let msg: Message;
-      try { msg = JSON.parse(e.data); } catch { return; }
+      let data: Message | { type: "voice"; channels: Record<string, VoiceMember[]> };
+      try { data = JSON.parse(e.data); } catch { return; }
+      if ("type" in data) {
+        this.#setVoiceRooms(data.channels);
+        return;
+      }
+      const msg = data;
       if (this.activeChannel && msg.channel_id === this.activeChannel.id) {
         this.messages = [...this.messages, msg];
       }
@@ -374,6 +384,14 @@ class GumcordStore {
       this.#wsRetries++;
       this.#wsRetryTimer = setTimeout(() => this.#openWS(), delay);
     };
+  }
+
+  #setVoiceRooms(channels: Record<string, VoiceMember[]>) {
+    // Avatars are client-set attributes relayed by the server: only use pictures from our own store.
+    this.voiceRooms = new Map(Object.entries(channels).map(([id, members]) => [
+      Number(id),
+      members.map((m) => ({ ...m, avatar: m.avatar?.startsWith("/files/") ? m.avatar : "" })),
+    ]));
   }
 
   // ── Voice ─────────────────────────────────────────────────
