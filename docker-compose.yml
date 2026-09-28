@@ -1,0 +1,38 @@
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+
+  coturn:
+    image: coturn/coturn:alpine
+    restart: unless-stopped
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --realm=local
+      - --lt-cred-mech
+      - --fingerprint
+      - --allow-loopback-peers
+      - --user=livekit:turnpass
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    ports:
+      - "7880:7880"       # HTTP / WebSocket signalling
+      - "7881:7881"       # TCP RTC fallback
+      - "7882:7882/udp"   # UDP RTC (single-port mode)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      - redis
+      - coturn
+    restart: unless-stopped
+
+volumes:
+  redis-data:
