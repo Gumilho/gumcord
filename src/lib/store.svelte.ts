@@ -1,6 +1,6 @@
 import {
   ConnectionQuality, DisconnectReason, Room, RoomEvent, Track,
-  type Participant, type RemoteTrackPublication,
+  type Participant, type RemoteParticipant, type RemoteTrackPublication,
 } from "livekit-client";
 import { audioContext, audioRunning, resumeAudio } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
@@ -17,6 +17,12 @@ interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; }
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
+// How loud this user hears another in voice (1 = 100%, up to 2), or whether they've muted them.
+// Local to the listener: the other person isn't affected or told.
+export interface UserAudio { volume: number; muted: boolean; }
+const DEFAULT_USER_AUDIO: UserAudio = { volume: 1, muted: false };
+// Sliders fire continuously; save once the value settles.
+const USER_AUDIO_SAVE_MS = 400;
 // track is null until the viewer opts in to watching; loading covers the gap after they do.
 export interface ScreenStream { identity: string; name: string; local: boolean; track: Track | null; loading: boolean; }
 
@@ -107,6 +113,10 @@ class GumcordStore {
   streams:           ScreenStream[]       = $state.raw([]);
   // Kept apart from voiceParticipants so a speaking tick doesn't re-render every row.
   speaking:          ReadonlySet<string>  = $state.raw(new Set());
+  // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
+  userAudio:         ReadonlyMap<string, UserAudio> = $state.raw(new Map());
+  // The per-person audio menu, opened by right-clicking someone in the call.
+  userMenu: { identity: string; name: string; x: number; y: number } | null = $state(null);
   screenSharing                           = $derived(this.streams.some((s) => s.local));
   readonly canScreenShare                 = typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
@@ -123,6 +133,9 @@ class GumcordStore {
   #wsRetries     = 0;
   #wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   #audioEls:     Map<string, HTMLAudioElement> = new Map();
+  #userAudioSaves = new Map<string, ReturnType<typeof setTimeout>>();
+  // Joining voice waits for this, so nobody is heard at the default volume before their setting loads.
+  #userAudioLoaded: Promise<void> = Promise.resolve();
   #fetchAbort:   AbortController | null        = null;
 
   // Labels shared by the sidebar and call-view controls.
@@ -184,6 +197,7 @@ class GumcordStore {
     this.#ws           = null;
     this.channels      = [];
     this.messages      = [];
+    this.userAudio     = new Map();
     this.activeChannel = null;
     this.bootError     = "";
     this.booted        = false;
@@ -223,6 +237,7 @@ class GumcordStore {
     // Everything below only needs the channel list, so it runs while the messages load.
     const messages = text ? this.selectChannel(text) : undefined;
     void preloadSounds();
+    this.#userAudioLoaded = this.#loadUserAudio();
     this.#openWS();
     this.#restoreVoice();
     await messages;
@@ -399,13 +414,20 @@ class GumcordStore {
     });
     if (!res.ok) return;
     const { token: lkToken } = await res.json();
+    await this.#userAudioLoaded;
 
-    // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
-    const r = new Room({ adaptiveStream: true, dynacast: true });
+    const r = new Room({
+      // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
+      adaptiveStream: true,
+      dynacast: true,
+      // Plays everyone through gain nodes on the shared context: per-person volume can go past 100%.
+      webAudioMix: { audioContext: audioContext() },
+    });
 
     // Discord has separate join/leave sounds for other people; connect/disconnect stand in for them.
-    r.on(RoomEvent.ParticipantConnected, () => {
+    r.on(RoomEvent.ParticipantConnected, (participant) => {
       playSound("connect");
+      this.#applyUserAudio(participant);
       this.#updateParticipants(r);
     });
     r.on(RoomEvent.ParticipantDisconnected, () => {
@@ -421,10 +443,17 @@ class GumcordStore {
     r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
         const el  = track.attach();
-        el.muted  = this.voiceDeafened;
         const sid = track.sid ?? track.source;
         this.#audioEls.set(sid, el);
         document.body.appendChild(el);
+        this.#applyUserAudio(participant);
+        // LiveKit fades a new track's gain in from 100% and skips it entirely for a volume of 0, so a
+        // muted or deafened voice would be audible for a moment. Start it at the right level instead.
+        const gain = (track as unknown as { gainNode?: GainNode }).gainNode?.gain;
+        if (gain) {
+          gain.cancelScheduledValues(0);
+          gain.value = this.#volumeFor(participant.identity, pub.source);
+        }
         if (pub.source === Track.Source.Microphone) {
           this.#speakingDetector.watch(participant.identity, track.mediaStreamTrack);
         }
@@ -485,9 +514,8 @@ class GumcordStore {
       this.#resetVoice();
     });
 
-    // Set before connecting so tracks subscribed during connect are attached already muted.
+    // Set before connecting so tracks subscribed during connect start silent.
     this.voiceDeafened = prefs.deafened ?? false;
-    audioContext();
     // Disconnecting while connecting cancels the attempt and rejects connect().
     const giveUp = setTimeout(() => void r.disconnect(), JOIN_TIMEOUT_MS);
     try {
@@ -523,8 +551,8 @@ class GumcordStore {
   }
 
   #syncAudioPlayback(r: Room) {
+    // Voices play through the shared context, so this is also what sounds and speaking detection need.
     this.audioBlocked = !r.canPlaybackAudio;
-    // A suspended shared context doesn't block hearing anyone, so it doesn't set audioBlocked.
     if (this.audioBlocked || !audioRunning()) this.#armAudioResume();
   }
 
@@ -569,6 +597,7 @@ class GumcordStore {
     this.#speakingDetector.clear();
     this.#serverSpeaking   = new Set();
     this.#wantMuted        = false;
+    this.userMenu          = null;
     this.mainView          = "chat";
     this.room              = null;
     this.voiceChannel      = null;
@@ -598,9 +627,87 @@ class GumcordStore {
 
   #setIncomingAudio(on: boolean) {
     this.voiceDeafened = !on;
-    this.#audioEls.forEach((el) => (el.muted = !on));
+    this.room?.remoteParticipants.forEach((p) => this.#applyUserAudio(p));
     this.#publishDeafened();
     this.#updateParticipants(this.room);
+  }
+
+  // ── Per-person audio ──────────────────────────────────────
+
+  userAudioFor(identity: string): UserAudio {
+    return this.userAudio.get(identity) ?? DEFAULT_USER_AUDIO;
+  }
+
+  // Screen-share audio follows deafen only; per-person settings are for voices.
+  #volumeFor(identity: string, source: Track.Source) {
+    if (this.voiceDeafened) return 0;
+    if (source !== Track.Source.Microphone) return 1;
+    const { volume, muted } = this.userAudioFor(identity);
+    return muted ? 0 : volume;
+  }
+
+  // LiveKit remembers these per source and applies them to tracks that arrive later.
+  #applyUserAudio(p: RemoteParticipant) {
+    for (const source of [Track.Source.Microphone, Track.Source.ScreenShareAudio] as const) {
+      p.setVolume(this.#volumeFor(p.identity, source), source);
+    }
+  }
+
+  async #loadUserAudio() {
+    try {
+      const res = await this.#api("/user-audio");
+      if (!res.ok) return;
+      const list: (UserAudio & { target_id: number })[] = await res.json();
+      this.userAudio = new Map(list.map((a) => [String(a.target_id), { volume: a.volume, muted: a.muted }]));
+    } catch (err) {
+      console.warn("Couldn't load voice settings:", err);
+    }
+  }
+
+  setUserVolume(identity: string, volume: number) {
+    this.#setUserAudio(identity, { ...this.userAudioFor(identity), volume });
+  }
+
+  toggleUserMute(identity: string) {
+    const audio = this.userAudioFor(identity);
+    this.#setUserAudio(identity, { ...audio, muted: !audio.muted });
+  }
+
+  #setUserAudio(identity: string, audio: UserAudio) {
+    this.userAudio = new Map(this.userAudio).set(identity, audio);
+    const p = this.room?.remoteParticipants.get(identity);
+    if (p) this.#applyUserAudio(p);
+
+    clearTimeout(this.#userAudioSaves.get(identity));
+    this.#userAudioSaves.set(identity, setTimeout(() => {
+      this.#userAudioSaves.delete(identity);
+      this.#api(`/user-audio/${identity}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(audio),
+      }).catch((err) => console.warn("Couldn't save voice settings:", err));
+    }, USER_AUDIO_SAVE_MS));
+  }
+
+  isMe(identity: string) {
+    return identity === String(this.me?.id);
+  }
+
+  // Click or right-click opens it at the pointer; Enter or Space opens it under the row.
+  // Your own row has no menu: there's nothing to adjust about hearing yourself.
+  openUserMenu(e: MouseEvent | KeyboardEvent, p: { identity: string; name: string }) {
+    if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (this.isMe(p.identity)) return;
+    const at = e instanceof MouseEvent
+      ? { x: e.clientX, y: e.clientY }
+      : (() => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); return { x: r.left, y: r.bottom }; })();
+    this.userMenu = { identity: p.identity, name: p.name, ...at };
+  }
+
+  closeUserMenu() {
+    this.userMenu = null;
   }
 
   async #setMic(on: boolean) {

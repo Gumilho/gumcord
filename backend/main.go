@@ -67,6 +67,8 @@ func main() {
 	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
 	mux.HandleFunc("POST /api/voice/token", requireUser(handleVoiceToken))
+	mux.HandleFunc("GET /api/user-audio", requireUser(handleUserAudio))
+	mux.HandleFunc("PUT /api/user-audio/{id}", requireUser(handleSetUserAudio))
 	mux.HandleFunc("POST /api/upload", requireUser(handleUpload))
 	mux.HandleFunc("GET /api/", http.NotFound) // keep unknown API paths out of the app fallback
 	mux.Handle("GET /files/", serveUploads())

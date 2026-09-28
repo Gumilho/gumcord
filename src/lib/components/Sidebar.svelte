@@ -211,7 +211,21 @@
         <ul class="participants">
           {#each store.voiceParticipants as p (p.identity)}
             {@const speaking = store.speaking.has(p.identity)}
-            <li class="participant" class:speaking>
+            {@const mutedByMe = store.userAudioFor(p.identity).muted}
+            {@const clickable = !store.isMe(p.identity)}
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <li
+              class="participant"
+              class:speaking
+              class:clickable
+              role={clickable ? "button" : undefined}
+              tabindex={clickable ? 0 : undefined}
+              aria-label={clickable ? `Voice settings for ${p.name}` : undefined}
+              onclick={(e) => store.openUserMenu(e, p)}
+              oncontextmenu={(e) => store.openUserMenu(e, p)}
+              onkeydown={(e) => store.openUserMenu(e, p)}
+            >
               <div class="participant-avatar" class:speaking>
                 <UserAvatar name={p.name} src={p.avatar} />
               </div>
@@ -219,7 +233,11 @@
               {#if liveIds.has(p.identity)}
                 <span class="live-badge">LIVE</span>
               {/if}
-              {#if p.muted}
+              {#if mutedByMe}
+                <span class="status-icon muted-by-me" role="img" aria-label="Muted for you" use:tooltip={"Muted for you"}>
+                  <VoiceIcon kind="mic" slashed size={16} />
+                </span>
+              {:else if p.muted}
                 <span class="status-icon" role="img" aria-label="Muted" use:tooltip={"Muted"}>
                   <VoiceIcon kind="mic" slashed size={16} />
                 </span>
@@ -538,7 +556,7 @@
   .participants {
     list-style: none;
     margin: 0;
-    padding: 2px 0 4px 36px;
+    padding: 2px 0 4px 30px;
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -548,9 +566,19 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 2px 8px 2px 0;
+    padding: 2px 8px 2px 6px;
     border-radius: 4px;
   }
+
+  .participant.clickable {
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .participant.clickable:hover,
+  .participant.clickable:focus-visible { background: #2d3058; }
+
+  .participant.clickable:focus-visible { outline: 2px solid #7c5cbf; outline-offset: -2px; }
 
   .participant-avatar {
     width: 20px;
@@ -568,6 +596,8 @@
   }
 
   .participant-avatar.speaking { box-shadow: 0 0 0 2px #4ade80; }
+
+  .status-icon.muted-by-me { color: #f87171; }
 
   .participant-name {
     font-size: 13px;

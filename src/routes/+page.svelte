@@ -5,6 +5,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import CallPanel from '$lib/components/CallPanel.svelte';
+  import UserAudioMenu from '$lib/components/UserAudioMenu.svelte';
 
   onMount(() => store.boot());
   onDestroy(() => store.destroy());
@@ -44,6 +45,7 @@
       {/if}
     </main>
   </div>
+  <UserAudioMenu />
 {/if}
 
 <style>

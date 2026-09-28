@@ -49,6 +49,15 @@ func initDB(dataDir string) {
 		-- History loads read one channel's newest messages.
 		CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, id);
 
+		-- How loud each user hears each other user in voice. Only non-default settings are stored.
+		CREATE TABLE IF NOT EXISTS user_audio (
+			user_id   INTEGER NOT NULL REFERENCES users(id),
+			target_id INTEGER NOT NULL REFERENCES users(id),
+			volume    REAL NOT NULL DEFAULT 1, -- 0 to 2 (200%)
+			muted     INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (user_id, target_id)
+		);
+
 		INSERT OR IGNORE INTO channels (name, kind) VALUES ('general','text'),('voice','voice');
 	`)
 	if err != nil {

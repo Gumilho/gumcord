@@ -69,14 +69,30 @@
   </header>
 
   {#snippet personTile(p: VoiceParticipant)}
-    <div class="tile" class:speaking={store.speaking.has(p.identity)} style="--hue: {hue(p.name)}">
+    {@const clickable = !store.isMe(p.identity)}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="tile"
+      class:speaking={store.speaking.has(p.identity)}
+      class:clickable
+      style="--hue: {hue(p.name)}"
+      role={clickable ? "button" : undefined}
+      tabindex={clickable ? 0 : undefined}
+      aria-label={clickable ? `Voice settings for ${p.name}` : undefined}
+      onclick={(e) => store.openUserMenu(e, p)}
+      oncontextmenu={(e) => store.openUserMenu(e, p)}
+      onkeydown={(e) => store.openUserMenu(e, p)}
+    >
       <!-- Camera video will render here; the avatar is the no-video fallback. -->
       <div class="tile-media">
         <div class="tile-avatar"><UserAvatar name={p.name} src={p.avatar} /></div>
       </div>
       <div class="tile-label">
         <span class="tile-name">{p.name}</span>
-        {#if p.muted}
+        {#if store.userAudioFor(p.identity).muted}
+          <span class="tile-icon muted-by-me" role="img" aria-label="Muted for you"><VoiceIcon kind="mic" slashed size={16} /></span>
+        {:else if p.muted}
           <span class="tile-icon" role="img" aria-label="Muted"><VoiceIcon kind="mic" slashed size={16} /></span>
         {/if}
         {#if p.deafened}
@@ -238,6 +254,16 @@
     background: hsl(var(--hue) 28% 22%);
     container-type: size;
   }
+
+  .tile.clickable {
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .tile.clickable:hover,
+  .tile.clickable:focus-visible { background: hsl(var(--hue) 30% 27%); }
+
+  .tile.clickable:focus-visible { outline: 2px solid #7c5cbf; outline-offset: -2px; }
 
   /* Speaking ring as an overlay, so it stays visible once video covers the tile. */
   .tile::after {
@@ -443,6 +469,8 @@
     flex-shrink: 0;
     color: #f87171;
   }
+
+  .tile-icon.muted-by-me { color: #f87171; }
 
   /* ── Controls ── */
   .controls {
