@@ -12,3 +12,4 @@ livekit.yaml
 !livekit.example.yaml
 backend/backend
 backend/*.db
+backend/uploads/

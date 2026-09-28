@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,6 +46,8 @@ func main() {
 	mux.HandleFunc("GET /channels/{id}/messages", guard(handleMessages))
 	mux.HandleFunc("GET /ws", guard(handleWS))
 	mux.HandleFunc("POST /voice/token", guard(handleVoiceToken))
+	mux.HandleFunc("POST /upload", guard(handleUpload))
+	mux.Handle("GET /files/", http.StripPrefix("/files/", http.FileServer(noDirFS{http.Dir(uploadDir)})))
 
 	log.Println("backend listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
@@ -185,7 +191,8 @@ func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT m.id, m.content, u.username, m.created_at
+		SELECT m.id, m.content, u.username, m.created_at,
+		       COALESCE(m.attachment_url, ''), COALESCE(m.attachment_type, '')
 		FROM messages m JOIN users u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
@@ -201,15 +208,17 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type message struct {
-		ID        int64  `json:"id"`
-		Content   string `json:"content"`
-		Username  string `json:"username"`
-		CreatedAt string `json:"created_at"`
+		ID             int64  `json:"id"`
+		Content        string `json:"content"`
+		Username       string `json:"username"`
+		CreatedAt      string `json:"created_at"`
+		AttachmentURL  string `json:"attachment_url,omitempty"`
+		AttachmentType string `json:"attachment_type,omitempty"`
 	}
 	msgs := []message{}
 	for rows.Next() {
 		var m message
-		rows.Scan(&m.ID, &m.Content, &m.Username, &m.CreatedAt)
+		rows.Scan(&m.ID, &m.Content, &m.Username, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
 		msgs = append(msgs, m)
 	}
 
@@ -223,11 +232,13 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 type wsMsg struct {
-	ID        int64  `json:"id"`
-	ChannelID int64  `json:"channel_id"`
-	Username  string `json:"username"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
+	ID             int64  `json:"id"`
+	ChannelID      int64  `json:"channel_id"`
+	Username       string `json:"username"`
+	Content        string `json:"content"`
+	CreatedAt      string `json:"created_at"`
+	AttachmentURL  string `json:"attachment_url,omitempty"`
+	AttachmentType string `json:"attachment_type,omitempty"`
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {
@@ -252,19 +263,29 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	for {
 		var in struct {
-			ChannelID int64  `json:"channel_id"`
-			Content   string `json:"content"`
+			ChannelID      int64  `json:"channel_id"`
+			Content        string `json:"content"`
+			AttachmentURL  string `json:"attachment_url"`
+			AttachmentType string `json:"attachment_type"`
 		}
 		if err := wsjson.Read(ctx, conn, &in); err != nil {
 			break
 		}
-		if strings.TrimSpace(in.Content) == "" {
+		// Only accept attachments that point at our own upload store.
+		if !strings.HasPrefix(in.AttachmentURL, "/files/") || strings.Contains(in.AttachmentURL, "..") {
+			in.AttachmentURL, in.AttachmentType = "", ""
+		}
+		if in.AttachmentType != "image" && in.AttachmentURL != "" {
+			in.AttachmentType = "file"
+		}
+		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {
 			continue
 		}
 
 		res, err := db.Exec(
-			`INSERT INTO messages (channel_id, user_id, content) VALUES (?, ?, ?)`,
-			in.ChannelID, userID, in.Content,
+			`INSERT INTO messages (channel_id, user_id, content, attachment_url, attachment_type)
+			 VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`,
+			in.ChannelID, userID, in.Content, in.AttachmentURL, in.AttachmentType,
 		)
 		if err != nil {
 			log.Printf("insert message: %v", err)
@@ -279,8 +300,10 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			ID:        id,
 			ChannelID: in.ChannelID,
 			Username:  username,
-			Content:   in.Content,
-			CreatedAt: createdAt,
+			Content:        in.Content,
+			CreatedAt:      createdAt,
+			AttachmentURL:  in.AttachmentURL,
+			AttachmentType: in.AttachmentType,
 		})
 	}
 }
@@ -320,4 +343,75 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"token": signed})
+}
+
+const (
+	uploadDir     = "uploads"
+	maxUploadSize = 25 << 20
+)
+
+// noDirFS disables directory listings on the file server.
+type noDirFS struct{ http.FileSystem }
+
+func (fs noDirFS) Open(name string) (http.File, error) {
+	f, err := fs.FileSystem.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if st, err := f.Stat(); err != nil || st.IsDir() {
+		f.Close()
+		return nil, os.ErrNotExist
+	}
+	return f, nil
+}
+
+func handleUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "file missing or too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	defer file.Close()
+
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(file, head)
+	mime := http.DetectContentType(head[:n])
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+
+	// SVG is deliberately not treated as an image: it can carry scripts.
+	kind := "file"
+	if strings.HasPrefix(mime, "image/") {
+		kind = "image"
+	}
+
+	rnd := make([]byte, 12)
+	rand.Read(rnd)
+	name := hex.EncodeToString(rnd) + strings.ToLower(filepath.Ext(header.Filename))
+
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	dst, err := os.Create(filepath.Join(uploadDir, name))
+	if err != nil {
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		os.Remove(dst.Name())
+		http.Error(w, "server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"url":  "/files/" + name,
+		"type": kind,
+		"name": header.Filename,
+	})
 }

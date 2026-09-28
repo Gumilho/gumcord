@@ -5,7 +5,12 @@ import { API_BASE, LIVEKIT_WS } from "./config.js";
 type RoomOptionsWithRtc = RoomOptions & { rtcConfig?: RTCConfiguration };
 
 interface Channel          { id: number; name: string; kind: string; }
-interface Message          { id: number; channel_id: number; username: string; content: string; created_at: string; }
+type AttachmentType = "image" | "file";
+interface Message {
+  id: number; channel_id: number; username: string; content: string; created_at: string;
+  attachment_url?: string; attachment_type?: AttachmentType;
+}
+interface Attachment { url: string; type: AttachmentType; name: string; }
 interface VoiceParticipant { identity: string; speaking: boolean; }
 
 const WS_RECONNECT_BASE = 1_000;  // ms
@@ -27,6 +32,9 @@ class GumcordStore {
   activeChannel: Channel | null = $state(null);
   messages:      Message[]      = $state([]);
   draft = $state("");
+  pendingAttachment: Attachment | null = $state(null);
+  uploading   = $state(false);
+  uploadError = $state("");
 
   // voice
   room:              Room | null          = $state(null);
@@ -120,7 +128,9 @@ class GumcordStore {
     // Cancel any in-flight fetch for a previous channel
     this.#fetchAbort?.abort();
     this.#fetchAbort = new AbortController();
-    this.activeChannel = ch;
+    this.activeChannel     = ch;
+    this.pendingAttachment = null;
+    this.uploadError       = "";
 
     try {
       const res = await fetch(`${API_BASE}/channels/${ch.id}/messages`, {
@@ -144,11 +154,42 @@ class GumcordStore {
     this.channels = [...this.channels, ch];
   }
 
+  async uploadFile(file: File) {
+    this.uploadError = "";
+    this.uploading   = true;
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${API_BASE}/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        this.uploadError = res.status === 413 ? "File too large (max 25 MB)." : "Upload failed.";
+        return;
+      }
+      this.pendingAttachment = await res.json();
+    } catch {
+      this.uploadError = "Upload failed.";
+    } finally {
+      this.uploading = false;
+    }
+  }
+
   sendMessage() {
     const content = this.draft.trim();
-    if (!content || !this.activeChannel || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
-    this.#ws.send(JSON.stringify({ channel_id: this.activeChannel.id, content }));
-    this.draft = "";
+    const att     = this.pendingAttachment;
+    if (!content && !att) return;
+    if (!this.activeChannel || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
+    this.#ws.send(JSON.stringify({
+      channel_id:      this.activeChannel.id,
+      content,
+      attachment_url:  att?.url  ?? "",
+      attachment_type: att?.type ?? "",
+    }));
+    this.draft             = "";
+    this.pendingAttachment = null;
   }
 
   // ── WebSocket ─────────────────────────────────────────────

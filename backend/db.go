@@ -42,4 +42,8 @@ func initDB() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Additive migrations; errors mean the column already exists.
+	db.Exec(`ALTER TABLE messages ADD COLUMN attachment_url TEXT`)
+	db.Exec(`ALTER TABLE messages ADD COLUMN attachment_type TEXT`)
 }
