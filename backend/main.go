@@ -239,12 +239,13 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 
-	hub.add(conn)
+	hub.add(conn, u)
 	defer hub.remove(conn)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	// Who's in voice right now; later changes arrive as broadcasts.
+	// Who's online and who's in voice right now; later changes arrive as broadcasts.
+	hub.send(conn, hub.onlineMsg())
 	if snap := presence.snapshot(); snap != nil {
 		hub.send(conn, snap)
 	}

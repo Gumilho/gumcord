@@ -2,6 +2,7 @@
   import { store } from "$lib/store.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import MemberList from "$lib/components/MemberList.svelte";
 
   let msgEnd: HTMLDivElement | null = $state(null);
   // Updated on scroll only; content growing (an image loading) fires no scroll event,
@@ -63,104 +64,125 @@
 </script>
 
 {#if store.activeChannel}
-  <header class="main-header"># {store.activeChannel.name}</header>
+  <header class="main-header">
+    <span class="header-title"># {store.activeChannel.name}</span>
+    <button
+      class="header-btn"
+      class:active={store.showMembers}
+      type="button"
+      aria-label="Member list"
+      aria-pressed={store.showMembers}
+      use:tooltip={store.showMembers ? "Hide member list" : "Show member list"}
+      onclick={() => store.toggleMembers()}
+    >
+      <Icon name="members" />
+    </button>
+  </header>
 
-  <div class="messages" onscroll={onMessagesScroll}>
-    {#each store.messages as msg (msg.id)}
-      <div class="message">
-        <div class="msg-meta">
-          <span class="msg-author">{msg.author}</span>
-          <span class="msg-time">{formatTime(msg.created_at)}</span>
-        </div>
-        {#if msg.content}
-          <p class="msg-content">{msg.content}</p>
-        {/if}
-        {#if msg.attachment_url && msg.attachment_type === "image"}
-          <button
-            class="msg-image-btn"
-            type="button"
-            aria-label="View image"
-            onclick={() => (viewing = msg.attachment_url ?? null)}
-          >
-            <img
-              class="msg-image"
-              src={msg.attachment_url}
-              alt="attachment"
-              loading="lazy"
-              onload={onImageLoad}
-            />
-          </button>
-        {:else if msg.attachment_url}
-          <a class="msg-file" href={msg.attachment_url} target="_blank" rel="noreferrer">
-            <Icon name="file" size={16} />
-            {fileName(msg.attachment_url)}
-          </a>
-        {/if}
-      </div>
-    {/each}
-    <div bind:this={msgEnd}></div>
-  </div>
-
-  <div class="chat-form">
-    <div class="text-area">
-      {#if store.uploading || store.pendingAttachment || store.uploadError}
-        <div class="attachments">
-          {#if store.uploading}
-            <div class="upload-status">Uploading…</div>
-          {:else if store.uploadError}
-            <div class="upload-status error">
-              {store.uploadError}
-              <button type="button" class="dismiss-btn" aria-label="Dismiss" use:tooltip={"Dismiss"} onclick={() => (store.uploadError = "")}>
-                <Icon name="close" size={16} />
-              </button>
+  <!-- The header spans the chat and the member list, like Discord. -->
+  <div class="chat-body">
+    <div class="chat-column">
+      <div class="messages" onscroll={onMessagesScroll}>
+        {#each store.messages as msg (msg.id)}
+          <div class="message">
+            <div class="msg-meta">
+              <span class="msg-author">{msg.author}</span>
+              <span class="msg-time">{formatTime(msg.created_at)}</span>
             </div>
-          {:else if store.pendingAttachment}
-            <div class="tile">
-              <div class="tile-media">
-                {#if store.pendingAttachment.type === "image"}
-                  <img src={store.pendingAttachment.url} alt={store.pendingAttachment.name} />
-                {:else}
-                  <Icon name="file" size={48} />
-                {/if}
-              </div>
-              <span class="tile-name">{store.pendingAttachment.name}</span>
+            {#if msg.content}
+              <p class="msg-content">{msg.content}</p>
+            {/if}
+            {#if msg.attachment_url && msg.attachment_type === "image"}
               <button
+                class="msg-image-btn"
                 type="button"
-                class="tile-remove"
-                aria-label="Remove attachment"
-                use:tooltip={"Remove attachment"}
-                onclick={() => (store.pendingAttachment = null)}
+                aria-label="View image"
+                onclick={() => (viewing = msg.attachment_url ?? null)}
               >
-                <Icon name="trash" size={18} />
+                <img
+                  class="msg-image"
+                  src={msg.attachment_url}
+                  alt="attachment"
+                  loading="lazy"
+                  onload={onImageLoad}
+                />
               </button>
+            {:else if msg.attachment_url}
+              <a class="msg-file" href={msg.attachment_url} target="_blank" rel="noreferrer">
+                <Icon name="file" size={16} />
+                {fileName(msg.attachment_url)}
+              </a>
+            {/if}
+          </div>
+        {/each}
+        <div bind:this={msgEnd}></div>
+      </div>
+
+      <div class="chat-form">
+        <div class="text-area">
+          {#if store.uploading || store.pendingAttachment || store.uploadError}
+            <div class="attachments">
+              {#if store.uploading}
+                <div class="upload-status">Uploading…</div>
+              {:else if store.uploadError}
+                <div class="upload-status error">
+                  {store.uploadError}
+                  <button type="button" class="dismiss-btn" aria-label="Dismiss" use:tooltip={"Dismiss"} onclick={() => (store.uploadError = "")}>
+                    <Icon name="close" size={16} />
+                  </button>
+                </div>
+              {:else if store.pendingAttachment}
+                <div class="tile">
+                  <div class="tile-media">
+                    {#if store.pendingAttachment.type === "image"}
+                      <img src={store.pendingAttachment.url} alt={store.pendingAttachment.name} />
+                    {:else}
+                      <Icon name="file" size={48} />
+                    {/if}
+                  </div>
+                  <span class="tile-name">{store.pendingAttachment.name}</span>
+                  <button
+                    type="button"
+                    class="tile-remove"
+                    aria-label="Remove attachment"
+                    use:tooltip={"Remove attachment"}
+                    onclick={() => (store.pendingAttachment = null)}
+                  >
+                    <Icon name="trash" size={18} />
+                  </button>
+                </div>
+              {/if}
             </div>
           {/if}
-        </div>
-      {/if}
 
-      <div class="inner">
-        <input type="file" hidden bind:this={fileInput} onchange={onFilePicked} />
-        <button
-          class="attach-btn"
-          type="button"
-          aria-label="Upload a file"
-          use:tooltip={"Upload a file"}
-          disabled={store.uploading}
-          onclick={() => fileInput?.click()}
-        >
-          <Icon name="plus" />
-        </button>
-        <textarea
-          class="msg-input"
-          rows="1"
-          bind:this={textarea}
-          bind:value={store.draft}
-          placeholder="Message #{store.activeChannel.name}"
-          aria-label="Message #{store.activeChannel.name}"
-          onkeydown={onInputKeydown}
-        ></textarea>
+          <div class="inner">
+            <input type="file" hidden bind:this={fileInput} onchange={onFilePicked} />
+            <button
+              class="attach-btn"
+              type="button"
+              aria-label="Upload a file"
+              use:tooltip={"Upload a file"}
+              disabled={store.uploading}
+              onclick={() => fileInput?.click()}
+            >
+              <Icon name="plus" />
+            </button>
+            <textarea
+              class="msg-input"
+              rows="1"
+              bind:this={textarea}
+              bind:value={store.draft}
+              placeholder="Message #{store.activeChannel.name}"
+              aria-label="Message #{store.activeChannel.name}"
+              onkeydown={onInputKeydown}
+            ></textarea>
+          </div>
+        </div>
       </div>
     </div>
+    {#if store.showMembers}
+      <MemberList />
+    {/if}
   </div>
 {:else}
   <div class="empty-state">Select a channel</div>
@@ -181,12 +203,51 @@
 
 <style>
   .main-header {
-    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 0 12px 0 16px;
     border-bottom: 1px solid #2a2d4a;
     font-weight: 600;
     font-size: 15px;
     color: #e8eaf6;
     flex-shrink: 0;
+  }
+
+  .header-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-btn {
+    display: flex;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: #8a90b4;
+    cursor: pointer;
+    transition: color 0.1s;
+  }
+
+  .header-btn:hover,
+  .header-btn.active { color: #e4e6f5; }
+
+  .chat-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .chat-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .messages {

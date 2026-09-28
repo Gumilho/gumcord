@@ -39,6 +39,8 @@ const avatarOf = (p: Participant) => (p.attributes.avatar?.startsWith("/files/")
 export const isDesktop = "gumcordDesktop" in window;
 // After signing out, show the sign-in screen instead of going straight back to PocketID.
 const SIGNED_OUT_KEY = "gc_signed_out";
+// Whether the member list is shown, remembered per device.
+const MEMBERS_KEY = "gc_members";
 
 const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
@@ -117,6 +119,9 @@ class GumcordStore {
   streams:           ScreenStream[]       = $state.raw([]);
   // Kept apart from voiceParticipants so a speaking tick doesn't re-render every row.
   speaking:          ReadonlySet<string>  = $state.raw(new Set());
+  // Everyone with the app open, sorted by name; pushed by the server.
+  online:            User[]               = $state.raw([]);
+  showMembers                             = $state(localStorage.getItem(MEMBERS_KEY) !== "0");
   // Who is in each voice channel (by channel ID), pushed by the server. Replaced wholesale on change.
   voiceRooms:        ReadonlyMap<number, VoiceMember[]> = $state.raw(new Map());
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
@@ -207,6 +212,7 @@ class GumcordStore {
     this.messages      = [];
     this.userAudio     = new Map();
     this.voiceRooms    = new Map();
+    this.online        = [];
     this.#justLeft     = null;
     this.activeChannel = null;
     this.bootError     = "";
@@ -368,10 +374,13 @@ class GumcordStore {
     };
 
     this.#ws.onmessage = (e) => {
-      let data: Message | { type: "voice"; channels: Record<string, VoiceMember[]> };
+      let data: Message
+        | { type: "voice"; channels: Record<string, VoiceMember[]> }
+        | { type: "online"; users: User[] };
       try { data = JSON.parse(e.data); } catch { return; }
       if ("type" in data) {
-        this.#setVoiceRooms(data.channels);
+        if (data.type === "voice") this.#setVoiceRooms(data.channels);
+        else if (data.type === "online") this.online = data.users;
         return;
       }
       const msg = data;
@@ -389,6 +398,11 @@ class GumcordStore {
       this.#wsRetries++;
       this.#wsRetryTimer = setTimeout(() => this.#openWS(), delay);
     };
+  }
+
+  toggleMembers() {
+    this.showMembers = !this.showMembers;
+    localStorage.setItem(MEMBERS_KEY, this.showMembers ? "1" : "0");
   }
 
   #setVoiceRooms(channels: Record<string, VoiceMember[]>) {
