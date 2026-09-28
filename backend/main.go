@@ -297,9 +297,9 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		db.QueryRow(`SELECT created_at FROM messages WHERE id = ?`, id).Scan(&createdAt)
 
 		hub.broadcast(wsMsg{
-			ID:        id,
-			ChannelID: in.ChannelID,
-			Username:  username,
+			ID:             id,
+			ChannelID:      in.ChannelID,
+			Username:       username,
 			Content:        in.Content,
 			CreatedAt:      createdAt,
 			AttachmentURL:  in.AttachmentURL,
@@ -322,6 +322,8 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	type videoGrant struct {
 		Room     string `json:"room"`
 		RoomJoin bool   `json:"roomJoin"`
+		// Lets clients publish their own deafen state as a participant attribute.
+		CanUpdateOwnMetadata bool `json:"canUpdateOwnMetadata"`
 	}
 	type lkClaims struct {
 		Video *videoGrant `json:"video"`
@@ -329,7 +331,7 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, lkClaims{
-		Video:     &videoGrant{Room: body.Room, RoomJoin: true},
+		Video:     &videoGrant{Room: body.Room, RoomJoin: true, CanUpdateOwnMetadata: true},
 		Issuer:    lkAPIKey,
 		Subject:   username,
 		IssuedAt:  jwt.NewNumericDate(time.Now()),

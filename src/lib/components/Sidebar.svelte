@@ -1,11 +1,30 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
+  import { ConnectionQuality } from "livekit-client";
+  import { tooltip } from "$lib/tooltip.ts";
+  import VoiceIcon from "$lib/components/VoiceIcon.svelte";
 
   type MenuItem = { label: string; action: () => void; danger?: boolean };
   type MenuState = { x: number; y: number; items: MenuItem[] };
   type Channel = { id: number; name: string; kind: string };
 
   function initial(name: string) { return name.charAt(0).toUpperCase(); }
+
+  function qualityClass(q: ConnectionQuality) {
+    if (q === ConnectionQuality.Poor) return "poor";
+    if (q === ConnectionQuality.Lost) return "lost";
+    return "good";
+  }
+
+  function qualityLabel(q: ConnectionQuality) {
+    return {
+      [ConnectionQuality.Excellent]: "excellent",
+      [ConnectionQuality.Good]: "good",
+      [ConnectionQuality.Poor]: "poor",
+      [ConnectionQuality.Lost]: "lost",
+      [ConnectionQuality.Unknown]: "checking…",
+    }[q];
+  }
 
   let menu: MenuState | null = $state(null);
   let creating: 'text' | 'voice' | null = $state(null);
@@ -135,7 +154,7 @@
       <button
         class="channel-row voice-channel"
         class:in-voice={!!store.room}
-        onclick={() => (store.room ? store.leaveVoice() : store.joinVoice(ch))}
+        onclick={() => { if (!store.room) store.joinVoice(ch); }}
         oncontextmenu={(e) => onChannelContext(e, ch)}
       >
         <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -143,9 +162,6 @@
           <path fill="currentColor" d="M15.16 16.51c-.57.28-1.16-.2-1.16-.83v-.14c0-.43.28-.8.63-1.02a3 3 0 0 0 0-5.04c-.35-.23-.63-.6-.63-1.02v-.14c0-.63.59-1.1 1.16-.83a5 5 0 0 1 0 9.02Z" />
         </svg>
         <span class="ch-name">{ch.name}</span>
-        {#if store.room}
-          <span class="leave-badge">Leave</span>
-        {/if}
       </button>
 
       <!-- Participants -->
@@ -157,13 +173,16 @@
                 {initial(p.identity)}
               </div>
               <span class="participant-name">{p.identity}</span>
-              <svg
-                class="mic-status"
-                class:muted={p.identity === store.username && store.voiceMuted}
-                width="14" height="14" viewBox="0 0 24 24" fill="none"
-              >
-                <path fill="currentColor" d="M14.5 2.1a2.5 2.5 0 0 0-5 0v9.8a2.5 2.5 0 0 0 5 0V2.1ZM19 10a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.93V19H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-2.07A7 7 0 0 0 19 10Z" />
-              </svg>
+              {#if p.muted}
+                <span class="status-icon" role="img" aria-label="Muted" use:tooltip={"Muted"}>
+                  <VoiceIcon kind="mic" slashed size={16} />
+                </span>
+              {/if}
+              {#if p.deafened}
+                <span class="status-icon" role="img" aria-label="Deafened" use:tooltip={"Deafened"}>
+                  <VoiceIcon kind="headphones" slashed size={16} />
+                </span>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -188,6 +207,38 @@
     {/if}
   </nav>
 
+  <!-- Voice connection panel -->
+  {#if store.room && store.voiceChannel}
+    <div class="voice-panel">
+      <div class="voice-status">
+        <svg
+          class="ping q-{qualityClass(store.voiceQuality)}"
+          width="20" height="20" viewBox="0 0 24 24" fill="none"
+          role="img"
+          aria-label="Connection: {qualityLabel(store.voiceQuality)}"
+        >
+          <title>Connection: {qualityLabel(store.voiceQuality)}</title>
+          <path fill="currentColor" d="M2 3a1 1 0 0 1 1-1 19 19 0 0 1 19 19 1 1 0 1 1-2 0A17 17 0 0 0 3 4a1 1 0 0 1-1-1Z" />
+          <path fill="currentColor" d="M2 8a1 1 0 0 1 1-1 14 14 0 0 1 14 14 1 1 0 1 1-2 0A12 12 0 0 0 3 9a1 1 0 0 1-1-1Z" />
+          <path fill="currentColor" d="M3 12a1 1 0 1 0 0 2 7 7 0 0 1 7 7 1 1 0 1 0 2 0 9 9 0 0 0-9-9ZM2 17.83c0-.46.37-.83.83-.83C5.13 17 7 18.87 7 21.17c0 .46-.37.83-.83.83H3a1 1 0 0 1-1-1v-3.17Z" />
+        </svg>
+        <div class="voice-text">
+          <span class="voice-label q-{qualityClass(store.voiceQuality)}">Voice Connected</span>
+          {#if store.audioBlocked}
+            <button class="audio-blocked" onclick={() => store.enableAudio()}>Click to enable audio</button>
+          {:else}
+            <span class="voice-channel-name">{store.voiceChannel.name}</span>
+          {/if}
+        </div>
+      </div>
+      <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+          <path fill="currentColor" d="M21.33 13.32c-.11 1.03-1.07 1.68-2.07 1.43l-2.73-.68a2.08 2.08 0 0 1-1.57-1.89l-.07-1.3a.63.63 0 0 0-.5-.58 11.58 11.58 0 0 0-4.78 0 .63.63 0 0 0-.5.58l-.07 1.3a2.08 2.08 0 0 1-1.57 1.9l-2.73.67c-1 .25-1.96-.4-2.07-1.43-.2-1.8.23-3.72 2.22-4.9a16.6 16.6 0 0 1 14.82 0c2 1.18 2.43 3.1 2.22 4.9Z" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+
   <!-- Footer -->
   <div class="sidebar-footer">
     <div class="avatar">{initial(store.username)}</div>
@@ -197,18 +248,23 @@
       <button
         class="icon-btn"
         class:muted={store.voiceMuted}
-        title={store.voiceMuted ? "Unmute" : "Mute"}
+        aria-label={store.voiceMuted ? "Unmute" : "Mute"}
+        aria-pressed={store.voiceMuted}
+        use:tooltip={store.micBlocked ? "Microphone unavailable. Check permissions" : store.voiceMuted ? "Unmute" : "Mute"}
         onclick={() => store.toggleMute()}
       >
-        {#if store.voiceMuted}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path fill="currentColor" d="M2.7 3.7a1 1 0 1 1 1.42-1.42l16 16a1 1 0 0 1-1.42 1.42l-1.68-1.67A7 7 0 0 1 11 24.93V22H9a1 1 0 1 1 0-2h2v-2.07A7 7 0 0 1 5 11a1 1 0 1 1 2 0 5 5 0 0 0 7.41 4.38L12 13l-.59-.59A2.5 2.5 0 0 1 7 11V5.41L2.7 3.7ZM17 11a1 1 0 1 1 2 0 7 7 0 0 1-.36 2.24l-1.52-1.52A5 5 0 0 0 17 11Zm-5-9a2.5 2.5 0 0 1 2.5 2.5v5.09l-5-5V4.1A2.5 2.5 0 0 1 12 2Z" />
-          </svg>
-        {:else}
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path fill="currentColor" d="M14.5 2.1a2.5 2.5 0 0 0-5 0v9.8a2.5 2.5 0 0 0 5 0V2.1ZM19 10a1 1 0 1 0-2 0 5 5 0 0 1-10 0 1 1 0 0 0-2 0 7 7 0 0 0 6 6.93V19H9a1 1 0 1 0 0 2h6a1 1 0 1 0 0-2h-2v-2.07A7 7 0 0 0 19 10Z" />
-          </svg>
-        {/if}
+        <VoiceIcon kind="mic" slashed={store.voiceMuted} />
+      </button>
+
+      <button
+        class="icon-btn"
+        class:muted={store.voiceDeafened}
+        aria-label={store.voiceDeafened ? "Undeafen" : "Deafen"}
+        aria-pressed={store.voiceDeafened}
+        use:tooltip={store.voiceDeafened ? "Undeafen" : "Deafen"}
+        onclick={() => store.toggleDeafen()}
+      >
+        <VoiceIcon kind="headphones" slashed={store.voiceDeafened} />
       </button>
     {/if}
   </div>
@@ -349,17 +405,6 @@
   .voice-channel.in-voice { color: #a78bfa; }
   .voice-channel.in-voice .ch-icon { color: #a78bfa; }
 
-  .leave-badge {
-    font-size: 10px;
-    font-weight: 600;
-    color: #f87171;
-    background: #2d1515;
-    border-radius: 3px;
-    padding: 1px 5px;
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
   /* ── Inline create input ── */
   .create-row {
     display: flex;
@@ -431,8 +476,71 @@
 
   .participant.speaking .participant-name { color: #c8cde8; }
 
-  .mic-status { color: #4a5168; flex-shrink: 0; }
-  .mic-status.muted { color: #f87171; }
+  .status-icon {
+    display: flex;
+    flex-shrink: 0;
+    color: #8a90b4;
+  }
+
+  /* ── Voice connection panel ── */
+  .voice-panel {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 8px 8px 10px;
+    background: #191b2e;
+    border-top: 1px solid #252840;
+    flex-shrink: 0;
+  }
+
+  .voice-status {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ping { flex-shrink: 0; }
+  .q-good { color: #4ade80; }
+  .q-poor { color: #facc15; }
+  .q-lost { color: #f87171; }
+
+  .voice-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.25;
+  }
+
+  .voice-label {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .voice-channel-name {
+    font-size: 12px;
+    color: #8a90b4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .audio-blocked {
+    padding: 0;
+    border: none;
+    background: none;
+    color: #facc15;
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .audio-blocked:hover { text-decoration: underline; }
+
+  .icon-btn.disconnect,
+  .icon-btn.disconnect:hover { color: #c8cde8; }
 
   /* ── Footer ── */
   .sidebar-footer {

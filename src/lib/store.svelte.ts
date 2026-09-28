@@ -1,5 +1,6 @@
-import { Room, RoomEvent, Track, type RoomOptions } from "livekit-client";
+import { ConnectionQuality, Room, RoomEvent, Track, type RoomOptions } from "livekit-client";
 import { API_BASE, LIVEKIT_WS } from "./config.js";
+import { SpeakingDetector } from "./speaking.ts";
 
 // rtcConfig is valid at runtime but missing from the SDK's exported types
 type RoomOptionsWithRtc = RoomOptions & { rtcConfig?: RTCConfiguration };
@@ -11,10 +12,34 @@ interface Message {
   attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
-interface VoiceParticipant { identity: string; speaking: boolean; }
+interface VoiceParticipant { identity: string; speaking: boolean; muted: boolean; deafened: boolean; }
+
+// LiveKit has no deafen concept, so each client publishes it as a participant attribute.
+const DEAFENED_ATTR = "deafened";
 
 const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
+
+// Per-device session state, so a page refresh lands back where the user was.
+const CHANNEL_KEY = "gc_channel";
+const VOICE_KEY   = "gc_voice";
+interface VoicePrefs   { muted: boolean; deafened: boolean; }
+interface VoiceSession extends VoicePrefs { channelId: number; }
+
+const REQUEST_TIMEOUT_MS = 10_000;
+
+// A stalled server should surface as an error, not an endless load.
+async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUEST_TIMEOUT_MS) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  if (init.signal?.aborted) ctrl.abort();
+  init.signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 class GumcordStore {
   // auth
@@ -41,6 +66,20 @@ class GumcordStore {
   room:              Room | null          = $state(null);
   voiceMuted                              = $state(false);
   voiceParticipants: VoiceParticipant[]   = $state([]);
+  voiceChannel:      Channel | null       = $state(null);
+  voiceQuality:      ConnectionQuality    = $state(ConnectionQuality.Unknown);
+  // Mic permission denied or no input device: user can listen but stays muted.
+  micBlocked                              = $state(false);
+  voiceDeafened                           = $state(false);
+  // Autoplay policy blocked playback (e.g. auto-rejoin after a refresh); needs a user gesture.
+  audioBlocked                            = $state(false);
+  // The user's own mute choice, independent of deafen and mic-permission failures.
+  #wantMuted                              = false;
+  #joining                                = false;
+  #audioResumeArmed                       = false;
+  // Local level detection drives the speaking ring; the server's slower updates are the fallback.
+  #speakingDetector                       = new SpeakingDetector(() => this.#refreshSpeaking());
+  #serverSpeaking                         = new Set<string>();
 
   // private
   #ws:           WebSocket | null              = null;
@@ -90,15 +129,27 @@ class GumcordStore {
     this.booted        = false;
     localStorage.removeItem("gc_token");
     localStorage.removeItem("gc_username");
+    localStorage.removeItem(CHANNEL_KEY);
+    localStorage.removeItem(VOICE_KEY);
   }
 
   // ── Boot ──────────────────────────────────────────────────
 
   async boot() {
     this.bootError = "";
+    try {
+      await this.#boot();
+    } catch (err) {
+      // Anything unexpected must land on the error screen, never leave the splash up forever.
+      console.error("Boot failed:", err);
+      this.bootError = `Couldn't load Gumcord: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  async #boot() {
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/channels`, {
+      res = await fetchWithTimeout(`${API_BASE}/channels`, {
         headers: { Authorization: `Bearer ${this.token}` },
       });
     } catch {
@@ -109,10 +160,41 @@ class GumcordStore {
     if (!res.ok) { this.bootError = `Server error (${res.status}).`; return; }
 
     this.channels = await res.json();
-    const first = this.channels.find((c) => c.kind === "text");
-    if (first) await this.selectChannel(first);
+    const savedId = Number(localStorage.getItem(CHANNEL_KEY));
+    const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
+              ?? this.channels.find((c) => c.kind === "text");
+    if (text) await this.selectChannel(text);
     this.#openWS();
     this.booted = true;
+    this.#restoreVoice();
+  }
+
+  #restoreVoice() {
+    const saved = this.#loadVoiceSession();
+    if (!saved) return;
+    const ch = this.channels.find((c) => c.id === saved.channelId && c.kind === "voice");
+    if (!ch) { localStorage.removeItem(VOICE_KEY); return; }
+    // Not awaited: the app shouldn't wait on LiveKit before it's usable.
+    this.joinVoice(ch, saved).catch((err) => console.warn("Voice auto-rejoin failed:", err));
+  }
+
+  #loadVoiceSession(): VoiceSession | null {
+    try {
+      const s = JSON.parse(localStorage.getItem(VOICE_KEY) ?? "null");
+      return s && typeof s.channelId === "number" ? s : null;
+    } catch {
+      return null;
+    }
+  }
+
+  #saveVoiceSession() {
+    if (!this.voiceChannel) return;
+    const session: VoiceSession = {
+      channelId: this.voiceChannel.id,
+      muted:     this.#wantMuted,
+      deafened:  this.voiceDeafened,
+    };
+    localStorage.setItem(VOICE_KEY, JSON.stringify(session));
   }
 
   destroy() {
@@ -121,6 +203,7 @@ class GumcordStore {
     this.#audioEls.forEach((el) => el.remove());
     this.#audioEls.clear();
     this.room?.disconnect();
+    this.#speakingDetector.dispose();
   }
 
   // ── Channels / messages ───────────────────────────────────
@@ -134,9 +217,10 @@ class GumcordStore {
     this.activeChannel     = ch;
     this.pendingAttachment = null;
     this.uploadError       = "";
+    localStorage.setItem(CHANNEL_KEY, String(ch.id));
 
     try {
-      const res = await fetch(`${API_BASE}/channels/${ch.id}/messages`, {
+      const res = await fetchWithTimeout(`${API_BASE}/channels/${ch.id}/messages`, {
         headers: { Authorization: `Bearer ${this.token}` },
         signal: this.#fetchAbort.signal,
       });
@@ -224,8 +308,18 @@ class GumcordStore {
 
   // ── Voice ─────────────────────────────────────────────────
 
-  async joinVoice(ch: Channel) {
-    if (this.room) return;
+  async joinVoice(ch: Channel, prefs: Partial<VoicePrefs> = {}) {
+    // Guard against a click racing the auto-rejoin and opening two rooms.
+    if (this.room || this.#joining) return;
+    this.#joining = true;
+    try {
+      await this.#connectVoice(ch, prefs);
+    } finally {
+      this.#joining = false;
+    }
+  }
+
+  async #connectVoice(ch: Channel, prefs: Partial<VoicePrefs>) {
     const res = await fetch(`${API_BASE}/voice/token`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
@@ -247,69 +341,220 @@ class GumcordStore {
     r.on(RoomEvent.ParticipantConnected,    () => this.#updateParticipants(r));
     r.on(RoomEvent.ParticipantDisconnected, () => this.#updateParticipants(r));
 
-    r.on(RoomEvent.TrackSubscribed, (track) => {
+    r.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
         const el  = track.attach();
+        el.muted  = this.voiceDeafened;
         const sid = track.sid ?? track.source;
         this.#audioEls.set(sid, el);
         document.body.appendChild(el);
+        if (pub.source === Track.Source.Microphone) {
+          this.#speakingDetector.watch(participant.identity, track.mediaStreamTrack);
+        }
       }
       this.#updateParticipants(r);
     });
 
-    r.on(RoomEvent.TrackUnsubscribed, (track) => {
+    r.on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
       if (track.kind === Track.Kind.Audio) {
         track.detach();
         const sid = track.sid ?? track.source;
         this.#audioEls.get(sid)?.remove();
         this.#audioEls.delete(sid);
+        if (pub.source === Track.Source.Microphone) this.#speakingDetector.unwatch(participant.identity);
       }
       this.#updateParticipants(r);
     });
 
-    r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-      const speaking = new Set(speakers.map((p) => p.identity));
-      this.voiceParticipants = this.voiceParticipants.map((p) => ({
-        ...p,
-        speaking: speaking.has(p.identity),
-      }));
+    r.on(RoomEvent.LocalTrackPublished, (pub, participant) => {
+      if (pub.source === Track.Source.Microphone && pub.track) {
+        this.#speakingDetector.watch(participant.identity, pub.track.mediaStreamTrack);
+      }
     });
 
+    r.on(RoomEvent.LocalTrackUnpublished, (pub, participant) => {
+      if (pub.source === Track.Source.Microphone) this.#speakingDetector.unwatch(participant.identity);
+    });
+
+    r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      this.#serverSpeaking = new Set(speakers.map((p) => p.identity));
+      this.#refreshSpeaking();
+    });
+
+    r.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      if (participant.isLocal) this.voiceQuality = quality;
+    });
+
+    r.on(RoomEvent.AudioPlaybackStatusChanged, () => this.#syncAudioPlayback(r));
+
+    // Keep everyone's mute/deafen indicators current.
+    for (const ev of [
+      RoomEvent.TrackMuted,
+      RoomEvent.TrackUnmuted,
+      RoomEvent.TrackPublished,
+      RoomEvent.TrackUnpublished,
+      RoomEvent.ParticipantAttributesChanged,
+    ] as const) {
+      r.on(ev, () => this.#updateParticipants(r));
+    }
+
+    // Disconnects we didn't ask for (page unload, network drop) keep the saved session so a refresh rejoins.
     r.on(RoomEvent.Disconnected, () => {
       this.#audioEls.forEach((el) => el.remove());
       this.#audioEls.clear();
-      this.room             = null;
-      this.voiceParticipants = [];
+      this.#resetVoice();
     });
 
-    await r.connect(LIVEKIT_WS, lkToken);
-    await r.localParticipant.setMicrophoneEnabled(true);
-    this.room = r;
+    // Set before connecting so tracks subscribed during connect are attached already muted.
+    this.voiceDeafened = prefs.deafened ?? false;
+    this.#speakingDetector.prepare();
+    try {
+      await r.connect(LIVEKIT_WS, lkToken);
+    } catch (err) {
+      this.voiceDeafened = false;
+      throw err;
+    }
+    this.room         = r;
+    this.voiceChannel = ch;
     this.#updateParticipants(r);
+    this.#syncAudioPlayback(r);
+
+    this.#wantMuted = prefs.muted ?? false;
+    if (this.#wantMuted || this.voiceDeafened) this.voiceMuted = true;
+    else await this.#setMic(true);
+    if (this.voiceDeafened) this.#publishDeafened();
+    this.#updateParticipants(r);
+    this.#saveVoiceSession();
+  }
+
+  #publishDeafened() {
+    this.room?.localParticipant
+      .setAttributes({ [DEAFENED_ATTR]: this.voiceDeafened ? "1" : "" })
+      .catch((err) => console.warn("Couldn't publish deafen state:", err));
+  }
+
+  #syncAudioPlayback(r: Room) {
+    this.audioBlocked = !r.canPlaybackAudio;
+    // A suspended level-detection context doesn't block hearing anyone, so it doesn't set audioBlocked.
+    if (this.audioBlocked || !this.#speakingDetector.running) this.#armAudioResume();
+  }
+
+  // Autoplay needs a user gesture, so the first click or key press anywhere resumes playback.
+  #armAudioResume() {
+    if (this.#audioResumeArmed) return;
+    this.#audioResumeArmed = true;
+    const resume = () => {
+      document.removeEventListener("pointerdown", resume, true);
+      document.removeEventListener("keydown", resume, true);
+      this.#audioResumeArmed = false;
+      void this.enableAudio();
+    };
+    document.addEventListener("pointerdown", resume, true);
+    document.addEventListener("keydown", resume, true);
+  }
+
+  async enableAudio() {
+    const r = this.room;
+    if (!r) return;
+    try {
+      await Promise.all([r.startAudio(), this.#speakingDetector.resume()]);
+    } catch {
+      // Still blocked; #syncAudioPlayback re-arms below.
+    }
+    this.#syncAudioPlayback(r);
   }
 
   async leaveVoice() {
+    localStorage.removeItem(VOICE_KEY);
     if (!this.room) return;
     this.#audioEls.forEach((el) => el.remove());
     this.#audioEls.clear();
     await this.room.disconnect();
+    this.#resetVoice();
+  }
+
+  #resetVoice() {
     this.room              = null;
+    this.voiceChannel      = null;
     this.voiceMuted        = false;
+    this.micBlocked        = false;
+    this.voiceDeafened     = false;
+    this.audioBlocked      = false;
+    this.voiceQuality      = ConnectionQuality.Unknown;
     this.voiceParticipants = [];
+    this.#wantMuted        = false;
+    this.#serverSpeaking   = new Set();
+    this.#speakingDetector.clear();
+  }
+
+  async toggleDeafen() {
+    if (!this.room) return;
+    if (!this.voiceDeafened) {
+      this.#setIncomingAudio(false);
+      if (!this.voiceMuted) await this.#setMic(false);
+    } else {
+      this.#setIncomingAudio(true);
+      if (!this.#wantMuted) await this.#setMic(true);
+    }
+    this.#saveVoiceSession();
+  }
+
+  #setIncomingAudio(on: boolean) {
+    this.voiceDeafened = !on;
+    this.#audioEls.forEach((el) => (el.muted = !on));
+    this.#publishDeafened();
+    this.#updateParticipants(this.room);
+  }
+
+  async #setMic(on: boolean) {
+    if (!this.room) return;
+    try {
+      await this.room.localParticipant.setMicrophoneEnabled(on);
+      this.voiceMuted = !on;
+      if (on) this.micBlocked = false;
+    } catch {
+      this.micBlocked = true;
+      this.voiceMuted = true;
+    }
+    this.#updateParticipants(this.room);
   }
 
   async toggleMute() {
     if (!this.room) return;
-    this.voiceMuted = !this.voiceMuted;
-    await this.room.localParticipant.setMicrophoneEnabled(!this.voiceMuted);
+    const unmute = this.voiceMuted;
+    this.#wantMuted = !unmute;
+    // Unmuting while deafened undeafens too, like Discord.
+    if (unmute && this.voiceDeafened) this.#setIncomingAudio(true);
+    // Retrying on unmute lets it recover if the user grants permission later.
+    await this.#setMic(unmute);
+    this.#saveVoiceSession();
   }
 
-  #updateParticipants(r: Room) {
-    const current = new Map(this.voiceParticipants.map((p) => [p.identity, p.speaking]));
+  #speakingNow(): ReadonlySet<string> {
+    return this.#speakingDetector.running ? this.#speakingDetector.speaking : this.#serverSpeaking;
+  }
+
+  #refreshSpeaking() {
+    const speaking = this.#speakingNow();
+    if (this.voiceParticipants.every((p) => p.speaking === speaking.has(p.identity))) return;
+    this.voiceParticipants = this.voiceParticipants.map((p) => ({ ...p, speaking: speaking.has(p.identity) }));
+  }
+
+  #updateParticipants(r: Room | null) {
+    if (!r) return;
+    const speaking = this.#speakingNow();
+    const local = r.localParticipant;
     this.voiceParticipants = [
-      r.localParticipant,
-      ...Array.from(r.remoteParticipants.values()),
-    ].map((p) => ({ identity: p.identity, speaking: current.get(p.identity) ?? false }));
+      // Local state comes from the store so it updates before LiveKit round-trips.
+      { identity: local.identity, speaking: speaking.has(local.identity), muted: this.voiceMuted, deafened: this.voiceDeafened },
+      ...Array.from(r.remoteParticipants.values(), (p) => ({
+        identity: p.identity,
+        speaking: speaking.has(p.identity),
+        // No published mic (never enabled, or permission denied) also counts as muted.
+        muted:    !p.isMicrophoneEnabled,
+        deafened: p.attributes[DEAFENED_ATTR] === "1",
+      })),
+    ];
   }
 }
 

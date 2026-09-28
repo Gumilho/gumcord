@@ -24,6 +24,17 @@
         transition: opacity 0.25s ease;
       }
       #splash.hidden { opacity: 0; pointer-events: none; }
+      #splash .stuck { display: none; flex-direction: column; align-items: center; gap: 12px; text-transform: none; letter-spacing: 0; font-weight: 500; }
+      #splash.is-stuck .stuck { display: flex; }
+      #splash .stuck button {
+        padding: 7px 18px;
+        border: none;
+        border-radius: 6px;
+        background: #5b40c2;
+        color: #fff;
+        font: 600 13px system-ui, sans-serif;
+        cursor: pointer;
+      }
       #splash .mark {
         width: 56px;
         height: 56px;
@@ -52,7 +63,18 @@
     <div id="splash" role="status" aria-label="Loading Gumcord">
       <div class="mark">G</div>
       <span>Loading</span>
+      <div class="stuck">
+        <span>This is taking longer than it should. Check the console for errors.</span>
+        <button type="button" onclick="location.reload()">Reload</button>
+      </div>
     </div>
+    <script>
+      // Failsafe independent of the app bundle: if startup never finishes, say so instead of spinning forever.
+      setTimeout(function () {
+        var s = document.getElementById("splash");
+        if (s && !s.classList.contains("hidden")) s.classList.add("is-stuck");
+      }, 15000);
+    </script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
