@@ -26,6 +26,59 @@
     }[q];
   }
 
+  const WIDTH_KEY  = "gc_sidebar_width";
+  const MIN_WIDTH  = 264;
+  const MAX_WIDTH  = 432;
+  const KEY_STEP   = 16;
+
+  const clampWidth = (w: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(w)));
+
+  let width = $state(clampWidth(Number(localStorage.getItem(WIDTH_KEY)) || MIN_WIDTH));
+  let resizing = $state(false);
+
+  // Keep the resize cursor and block text selection page-wide while dragging.
+  $effect(() => {
+    document.body.classList.toggle("resizing-sidebar", resizing);
+  });
+
+  function saveWidth() {
+    localStorage.setItem(WIDTH_KEY, String(width));
+  }
+
+  function startResize(e: PointerEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const handle = e.currentTarget as HTMLElement;
+    const startX = e.clientX;
+    const startWidth = width;
+    handle.setPointerCapture(e.pointerId);
+    resizing = true;
+
+    const move = (ev: PointerEvent) => { width = clampWidth(startWidth + ev.clientX - startX); };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      resizing = false;
+      saveWidth();
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+
+  function resizeWithKeys(e: KeyboardEvent) {
+    const delta = { ArrowLeft: -KEY_STEP, ArrowRight: KEY_STEP }[e.key];
+    let next: number | undefined;
+    if (delta) next = width + delta;
+    else if (e.key === "Home") next = MIN_WIDTH;
+    else if (e.key === "End") next = MAX_WIDTH;
+    if (next === undefined) return;
+    e.preventDefault();
+    width = clampWidth(next);
+    saveWidth();
+  }
+
   let menu: MenuState | null = $state(null);
   let creating: 'text' | 'voice' | null = $state(null);
   let createName = $state('');
@@ -87,7 +140,7 @@
   onkeydown={(e) => { if (e.key === 'Escape') { closeMenu(); cancelCreate(); } }}
 />
 
-<aside class="sidebar">
+<aside class="sidebar" style="width: {width}px">
   <!-- Header -->
   <div class="sidebar-header">
     <span class="sidebar-title">Gumcord</span>
@@ -270,6 +323,26 @@
   </div>
 </aside>
 
+<!-- Zero-width flex item on the border line, so the grab area can straddle it (the sidebar clips overflow). -->
+<div class="resize-rail">
+  <!-- A focusable separator is an interactive ARIA widget; Svelte's check treats all separators as static. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="resize-handle"
+    class:active={resizing}
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize sidebar"
+    aria-valuemin={MIN_WIDTH}
+    aria-valuemax={MAX_WIDTH}
+    aria-valuenow={width}
+    tabindex="0"
+    onpointerdown={startResize}
+    onkeydown={resizeWithKeys}
+  ></div>
+</div>
+
 {#if menu}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -294,13 +367,54 @@
 
 <style>
   .sidebar {
-    width: 232px;
+    position: relative;
     flex-shrink: 0;
     background: #1e2035;
     border-right: 1px solid #252840;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  /* ── Resize handle ── */
+  .resize-rail {
+    position: relative;
+    width: 0;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+
+  /* 10px grab area centred on the sidebar's 1px right border, full height. */
+  .resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -6px;
+    width: 10px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 4px;
+    width: 2px;
+    background: transparent;
+    transition: background 0.15s;
+  }
+
+  .resize-handle:hover::after { transition-delay: 0.1s; }
+  .resize-handle:hover::after,
+  .resize-handle.active::after,
+  .resize-handle:focus-visible::after { background: #5b40c2; }
+  .resize-handle:focus-visible { outline: none; }
+
+  :global(body.resizing-sidebar) {
+    cursor: col-resize;
+    user-select: none;
   }
 
   /* ── Header ── */
