@@ -10,12 +10,19 @@
 </script>
 
 {#if store.token}
-  <div class="app">
-    <Sidebar />
-    <main class="main">
-      <ChatPanel />
-    </main>
-  </div>
+  {#if store.bootError}
+    <div class="boot-error">
+      <p>{store.bootError}</p>
+      <button onclick={() => store.boot()}>Retry</button>
+    </div>
+  {:else}
+    <div class="app">
+      <Sidebar />
+      <main class="main">
+        <ChatPanel />
+      </main>
+    </div>
+  {/if}
 {:else}
   <Login />
 {/if}
@@ -44,4 +51,26 @@
     overflow: hidden;
     background: #1a1b2e;
   }
+
+  .boot-error {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: #e57373;
+  }
+
+  .boot-error button {
+    padding: 8px 20px;
+    border-radius: 7px;
+    border: 1px solid #e57373;
+    background: none;
+    color: #e57373;
+    cursor: pointer;
+    font-size: 14px;
+  }
+
+  .boot-error button:hover { background: #2a1a1a; }
 </style>
