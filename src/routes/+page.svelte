@@ -25,7 +25,8 @@
   // --- voice ---
   let room = $state(null);
   let voiceMuted = $state(false);
-  let voiceParticipants = $state([]);
+  let voiceParticipants = $state([]); // [{identity, speaking}]
+  const audioEls = new Map(); // trackSid → HTMLAudioElement
 
   // -------------------------------------------------------
   // Auth
@@ -140,11 +141,36 @@
 
     room.on(RoomEvent.ParticipantConnected,    updateParticipants);
     room.on(RoomEvent.ParticipantDisconnected, updateParticipants);
-    room.on(RoomEvent.TrackSubscribed,         (track, _, p) => {
-      if (track.kind === Track.Kind.Audio) track.attach();
+
+    room.on(RoomEvent.TrackSubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) {
+        const el = track.attach();
+        audioEls.set(track.sid, el);
+        document.body.appendChild(el);
+      }
       updateParticipants();
     });
-    room.on(RoomEvent.Disconnected, () => { room = null; voiceParticipants = []; });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      if (track.kind === Track.Kind.Audio) {
+        track.detach();
+        audioEls.get(track.sid)?.remove();
+        audioEls.delete(track.sid);
+      }
+      updateParticipants();
+    });
+
+    room.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      const speaking = new Set(speakers.map(p => p.identity));
+      voiceParticipants = voiceParticipants.map(p => ({ ...p, speaking: speaking.has(p.identity) }));
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      audioEls.forEach((el, sid) => el.remove());
+      audioEls.clear();
+      room = null;
+      voiceParticipants = [];
+    });
 
     await room.connect(LIVEKIT_WS, lkToken);
     await room.localParticipant.setMicrophoneEnabled(true);
@@ -152,7 +178,11 @@
   }
 
   async function leaveVoice() {
-    await room?.disconnect();
+    if (!room) return;
+    // Detach all remote audio before disconnecting
+    audioEls.forEach((el) => el.remove());
+    audioEls.clear();
+    await room.disconnect();
     room = null;
     voiceMuted = false;
     voiceParticipants = [];
@@ -166,10 +196,11 @@
 
   function updateParticipants() {
     if (!room) return;
+    const current = new Map(voiceParticipants.map(p => [p.identity, p.speaking]));
     voiceParticipants = [
       room.localParticipant,
       ...Array.from(room.remoteParticipants.values()),
-    ].map(p => p.identity);
+    ].map(p => ({ identity: p.identity, speaking: current.get(p.identity) ?? false }));
   }
 
   // -------------------------------------------------------
@@ -177,7 +208,12 @@
   // -------------------------------------------------------
   if (token) boot();
 
-  onDestroy(() => { ws?.close(); room?.disconnect(); });
+  onDestroy(() => {
+    ws?.close();
+    audioEls.forEach(el => el.remove());
+    audioEls.clear();
+    room?.disconnect();
+  });
 </script>
 
 {#if !token}
@@ -243,8 +279,10 @@
         </button>
         {#if room && voiceParticipants.length > 0}
           <div class="voice-members">
-            {#each voiceParticipants as p}
-              <span class="voice-member">{p}</span>
+            {#each voiceParticipants as p (p.identity)}
+              <span class="voice-member" class:speaking={p.speaking}>
+                <span class="voice-dot"></span>{p.identity}
+              </span>
             {/each}
           </div>
         {/if}
@@ -487,8 +525,25 @@
 
   .voice-member {
     font-size: 12px;
-    color: #4a8c5c;
+    color: #6b7290;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: color .15s;
   }
+
+  .voice-member.speaking { color: #4ade80; }
+
+  .voice-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4a5168;
+    flex-shrink: 0;
+    transition: background .15s;
+  }
+
+  .voice-member.speaking .voice-dot { background: #4ade80; }
 
   .sidebar-footer {
     margin-top: auto;
