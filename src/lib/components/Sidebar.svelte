@@ -1,38 +1,30 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { store, type Channel, type ChannelKind } from "$lib/store.svelte.ts";
   import { ConnectionQuality } from "livekit-client";
   import { tooltip } from "$lib/tooltip.ts";
+  import { initial } from "$lib/avatar.ts";
+  import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
 
   type MenuItem = { label: string; action: () => void; danger?: boolean };
   type MenuState = { x: number; y: number; items: MenuItem[] };
-  type Channel = { id: number; name: string; kind: string };
 
-  function initial(name: string) { return name.charAt(0).toUpperCase(); }
+  const QUALITY_LABEL: Record<ConnectionQuality, string> = {
+    [ConnectionQuality.Excellent]: "excellent",
+    [ConnectionQuality.Good]: "good",
+    [ConnectionQuality.Poor]: "poor",
+    [ConnectionQuality.Lost]: "lost",
+    [ConnectionQuality.Unknown]: "checking…",
+  };
 
-  // Starting a share jumps to the call view so you can see what you're sharing; stopping stays put.
-  function shareFromPanel() {
-    if (!store.canScreenShare) return;
-    if (!store.screenSharing) store.mainView = "call";
-    // Called synchronously from the click so the browser still counts it as a user gesture.
-    void store.toggleScreenShare();
-  }
+  const quality = $derived({
+    cls: store.voiceQuality === ConnectionQuality.Poor ? "poor" : store.voiceQuality === ConnectionQuality.Lost ? "lost" : "good",
+    label: QUALITY_LABEL[store.voiceQuality],
+  });
 
-  function qualityClass(q: ConnectionQuality) {
-    if (q === ConnectionQuality.Poor) return "poor";
-    if (q === ConnectionQuality.Lost) return "lost";
-    return "good";
-  }
-
-  function qualityLabel(q: ConnectionQuality) {
-    return {
-      [ConnectionQuality.Excellent]: "excellent",
-      [ConnectionQuality.Good]: "good",
-      [ConnectionQuality.Poor]: "poor",
-      [ConnectionQuality.Lost]: "lost",
-      [ConnectionQuality.Unknown]: "checking…",
-    }[q];
-  }
+  const textChannels = $derived(store.channels.filter((c) => c.kind === "text"));
+  const voiceChannels = $derived(store.channels.filter((c) => c.kind === "voice"));
+  const liveIds = $derived(new Set(store.streams.map((s) => s.identity)));
 
   const WIDTH_KEY  = "gc_sidebar_width";
   const MIN_WIDTH  = 264;
@@ -88,7 +80,7 @@
   }
 
   let menu: MenuState | null = $state(null);
-  let creating: 'text' | 'voice' | null = $state(null);
+  let creating: ChannelKind | null = $state(null);
   let createName = $state('');
 
   function focus(node: HTMLElement) { node.focus(); }
@@ -126,7 +118,7 @@
     }
   }
 
-  function startCreate(kind: 'text' | 'voice') {
+  function startCreate(kind: ChannelKind) {
     creating = kind;
     createName = '';
   }
@@ -135,8 +127,7 @@
     const name = createName.trim();
     if (!name || !creating) return;
     await store.createChannel(name, creating);
-    creating = null;
-    createName = '';
+    cancelCreate();
   }
 
   function cancelCreate() {
@@ -149,17 +140,27 @@
   onkeydown={(e) => { if (e.key === 'Escape') { closeMenu(); cancelCreate(); } }}
 />
 
+{#snippet createRow(kind: ChannelKind)}
+  <div class="create-row">
+    <span class="ch-icon"><Icon name={kind === "text" ? "hash" : "speaker"} size={18} /></span>
+    <input
+      class="create-input"
+      type="text"
+      placeholder="channel-name"
+      bind:value={createName}
+      use:focus
+      onkeydown={(e) => { if (e.key === 'Enter') confirmCreate(); }}
+      onblur={cancelCreate}
+    />
+  </div>
+{/snippet}
+
 <aside class="sidebar" style="width: {width}px">
   <!-- Header -->
   <div class="sidebar-header">
     <span class="sidebar-title">Gumcord</span>
-    <button class="icon-btn" title="Log out" onclick={() => store.logout()}>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-        <path
-          fill="currentColor"
-          d="M8 4a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5a1 1 0 1 1 0 2H8a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3h5a1 1 0 1 1 0 2H8ZM15.7 7.3a1 1 0 0 1 1.4 0l4 4a1 1 0 0 1 0 1.4l-4 4a1 1 0 0 1-1.4-1.4L18.58 12l-2.88-2.3a1 1 0 0 1-.3-.7 1 1 0 0 1 .3-.7Z"
-        />
-      </svg>
+    <button class="icon-btn" aria-label="Log out" use:tooltip={"Log out"} onclick={() => store.logout()}>
+      <Icon name="logout" size={18} />
     </button>
   </div>
 
@@ -167,52 +168,33 @@
   <nav class="channels" oncontextmenu={onNavContext}>
     <!-- Text section -->
     <div class="section-header">
-      <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none">
-        <path fill="currentColor" d="M5.3 9.3a1 1 0 0 1 1.4 0l5.3 5.29 5.3-5.3a1 1 0 1 1 1.4 1.42l-6 6a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.42Z" />
-      </svg>
+      <span class="chevron"><Icon name="chevron" size={12} /></span>
       Text
     </div>
 
-    {#each store.channels.filter((c) => c.kind === "text") as ch (ch.id)}
+    {#each textChannels as ch (ch.id)}
       <button
         class="channel-row"
         class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
         onclick={() => store.selectChannel(ch)}
         oncontextmenu={(e) => onChannelContext(e, ch)}
       >
-        <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <path fill="currentColor" fill-rule="evenodd" d="M10.99 3.16A1 1 0 1 0 9 2.84L8.15 8H4a1 1 0 0 0 0 2h3.82l-.67 4H3a1 1 0 1 0 0 2h3.82l-.8 4.84a1 1 0 0 0 1.97.32L8.85 16h4.97l-.8 4.84a1 1 0 0 0 1.97.32l.86-5.16H20a1 1 0 1 0 0-2h-3.82l.67-4H21a1 1 0 1 0 0-2h-3.82l.8-4.84a1 1 0 1 0-1.97-.32L15.15 8h-4.97l.8-4.84ZM14.15 14l.67-4H9.85l-.67 4h4.97Z" clip-rule="evenodd" />
-        </svg>
+        <span class="ch-icon"><Icon name="hash" size={18} /></span>
         <span class="ch-name">{ch.name}</span>
       </button>
     {/each}
 
     {#if creating === 'text'}
-      <div class="create-row">
-        <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <path fill="currentColor" fill-rule="evenodd" d="M10.99 3.16A1 1 0 1 0 9 2.84L8.15 8H4a1 1 0 0 0 0 2h3.82l-.67 4H3a1 1 0 1 0 0 2h3.82l-.8 4.84a1 1 0 0 0 1.97.32L8.85 16h4.97l-.8 4.84a1 1 0 0 0 1.97.32l.86-5.16H20a1 1 0 1 0 0-2h-3.82l.67-4H21a1 1 0 1 0 0-2h-3.82l.8-4.84a1 1 0 1 0-1.97-.32L15.15 8h-4.97l.8-4.84ZM14.15 14l.67-4H9.85l-.67 4h4.97Z" clip-rule="evenodd" />
-        </svg>
-        <input
-          class="create-input"
-          type="text"
-          placeholder="channel-name"
-          bind:value={createName}
-          use:focus
-          onkeydown={(e) => { if (e.key === 'Enter') confirmCreate(); if (e.key === 'Escape') cancelCreate(); }}
-          onblur={cancelCreate}
-        />
-      </div>
+      {@render createRow('text')}
     {/if}
 
     <!-- Voice section -->
     <div class="section-header">
-      <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none">
-        <path fill="currentColor" d="M5.3 9.3a1 1 0 0 1 1.4 0l5.3 5.29 5.3-5.3a1 1 0 1 1 1.4 1.42l-6 6a1 1 0 0 1-1.4 0l-6-6a1 1 0 0 1 0-1.42Z" />
-      </svg>
+      <span class="chevron"><Icon name="chevron" size={12} /></span>
       Voice
     </div>
 
-    {#each store.channels.filter((c) => c.kind === "voice") as ch (ch.id)}
+    {#each voiceChannels as ch (ch.id)}
       <button
         class="channel-row voice-channel"
         class:in-voice={store.voiceChannel?.id === ch.id}
@@ -220,10 +202,7 @@
         onclick={() => store.openVoiceChannel(ch)}
         oncontextmenu={(e) => onChannelContext(e, ch)}
       >
-        <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <path fill="currentColor" d="M12 3a1 1 0 0 0-1-1h-.06a1 1 0 0 0-.74.32L5.92 7H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2.92l4.28 4.68a1 1 0 0 0 .74.32H11a1 1 0 0 0 1-1V3ZM15.1 20.75c-.58.14-1.1-.33-1.1-.92v-.03c0-.5.37-.92.85-1.05a7 7 0 0 0 0-13.5A1.11 1.11 0 0 1 14 4.2v-.03c0-.6.52-1.06 1.1-.92a9 9 0 0 1 0 17.5Z" />
-          <path fill="currentColor" d="M15.16 16.51c-.57.28-1.16-.2-1.16-.83v-.14c0-.43.28-.8.63-1.02a3 3 0 0 0 0-5.04c-.35-.23-.63-.6-.63-1.02v-.14c0-.63.59-1.1 1.16-.83a5 5 0 0 1 0 9.02Z" />
-        </svg>
+        <span class="ch-icon"><Icon name="speaker" size={18} /></span>
         <span class="ch-name">{ch.name}</span>
       </button>
 
@@ -231,12 +210,13 @@
       {#if store.voiceChannel?.id === ch.id && store.voiceParticipants.length > 0}
         <ul class="participants">
           {#each store.voiceParticipants as p (p.identity)}
-            <li class="participant" class:speaking={p.speaking}>
-              <div class="participant-avatar" class:speaking={p.speaking}>
+            {@const speaking = store.speaking.has(p.identity)}
+            <li class="participant" class:speaking>
+              <div class="participant-avatar" class:speaking>
                 {initial(p.identity)}
               </div>
               <span class="participant-name">{p.identity}</span>
-              {#if store.streams.some((s) => s.identity === p.identity)}
+              {#if liveIds.has(p.identity)}
                 <span class="live-badge">LIVE</span>
               {/if}
               {#if p.muted}
@@ -256,40 +236,19 @@
     {/each}
 
     {#if creating === 'voice'}
-      <div class="create-row">
-        <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <path fill="currentColor" d="M12 3a1 1 0 0 0-1-1h-.06a1 1 0 0 0-.74.32L5.92 7H3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h2.92l4.28 4.68a1 1 0 0 0 .74.32H11a1 1 0 0 0 1-1V3ZM15.1 20.75c-.58.14-1.1-.33-1.1-.92v-.03c0-.5.37-.92.85-1.05a7 7 0 0 0 0-13.5A1.11 1.11 0 0 1 14 4.2v-.03c0-.6.52-1.06 1.1-.92a9 9 0 0 1 0 17.5Z" />
-        </svg>
-        <input
-          class="create-input"
-          type="text"
-          placeholder="channel-name"
-          bind:value={createName}
-          use:focus
-          onkeydown={(e) => { if (e.key === 'Enter') confirmCreate(); if (e.key === 'Escape') cancelCreate(); }}
-          onblur={cancelCreate}
-        />
-      </div>
+      {@render createRow('voice')}
     {/if}
   </nav>
 
   <!-- Voice connection panel -->
   {#if store.room && store.voiceChannel}
     <div class="voice-panel">
-      <div class="voice-status">
-        <svg
-          class="ping q-{qualityClass(store.voiceQuality)}"
-          width="20" height="20" viewBox="0 0 24 24" fill="none"
-          role="img"
-          aria-label="Connection: {qualityLabel(store.voiceQuality)}"
-        >
-          <title>Connection: {qualityLabel(store.voiceQuality)}</title>
-          <path fill="currentColor" d="M2 3a1 1 0 0 1 1-1 19 19 0 0 1 19 19 1 1 0 1 1-2 0A17 17 0 0 0 3 4a1 1 0 0 1-1-1Z" />
-          <path fill="currentColor" d="M2 8a1 1 0 0 1 1-1 14 14 0 0 1 14 14 1 1 0 1 1-2 0A12 12 0 0 0 3 9a1 1 0 0 1-1-1Z" />
-          <path fill="currentColor" d="M3 12a1 1 0 1 0 0 2 7 7 0 0 1 7 7 1 1 0 1 0 2 0 9 9 0 0 0-9-9ZM2 17.83c0-.46.37-.83.83-.83C5.13 17 7 18.87 7 21.17c0 .46-.37.83-.83.83H3a1 1 0 0 1-1-1v-3.17Z" />
-        </svg>
+      <div class="voice-status q-{quality.cls}">
+        <span class="ping" role="img" aria-label="Connection: {quality.label}" use:tooltip={`Connection: ${quality.label}`}>
+          <Icon name="signal" />
+        </span>
         <div class="voice-text">
-          <span class="voice-label q-{qualityClass(store.voiceQuality)}">Voice Connected</span>
+          <span class="voice-label">Voice Connected</span>
           {#if store.audioBlocked}
             <button class="audio-blocked" onclick={() => store.enableAudio()}>Click to enable audio</button>
           {:else}
@@ -303,20 +262,14 @@
           class:sharing={store.screenSharing}
           aria-disabled={!store.canScreenShare}
           aria-pressed={store.screenSharing}
-          aria-label={store.screenSharing ? "Stop sharing" : "Share your screen"}
-          use:tooltip={!store.canScreenShare
-            ? "Screen sharing isn't supported in this window"
-            : store.screenSharing ? "Stop sharing" : "Share your screen"}
-          onclick={shareFromPanel}
+          aria-label={store.shareLabel}
+          use:tooltip={store.shareLabel}
+          onclick={() => store.toggleScreenShare()}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path fill="currentColor" fill-rule="evenodd" d="M5 3a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h6v2H8a1 1 0 1 0 0 2h8a1 1 0 1 0 0-2h-3v-2h6a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3H5Zm7 3.5L8.5 10H11v3.5h2V10h2.5L12 6.5Z" />
-          </svg>
+          <Icon name="screenShare" />
         </button>
         <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path fill="currentColor" d="M21.33 13.32c-.11 1.03-1.07 1.68-2.07 1.43l-2.73-.68a2.08 2.08 0 0 1-1.57-1.89l-.07-1.3a.63.63 0 0 0-.5-.58 11.58 11.58 0 0 0-4.78 0 .63.63 0 0 0-.5.58l-.07 1.3a2.08 2.08 0 0 1-1.57 1.9l-2.73.67c-1 .25-1.96-.4-2.07-1.43-.2-1.8.23-3.72 2.22-4.9a16.6 16.6 0 0 1 14.82 0c2 1.18 2.43 3.1 2.22 4.9Z" />
-          </svg>
+          <Icon name="hangup" />
         </button>
       </div>
     </div>
@@ -331,9 +284,9 @@
       <button
         class="icon-btn"
         class:muted={store.voiceMuted}
-        aria-label={store.voiceMuted ? "Unmute" : "Mute"}
+        aria-label={store.muteLabel}
         aria-pressed={store.voiceMuted}
-        use:tooltip={store.micBlocked ? "Microphone unavailable. Check permissions" : store.voiceMuted ? "Unmute" : "Mute"}
+        use:tooltip={store.muteLabel}
         onclick={() => store.toggleMute()}
       >
         <VoiceIcon kind="mic" slashed={store.voiceMuted} />
@@ -342,9 +295,9 @@
       <button
         class="icon-btn"
         class:muted={store.voiceDeafened}
-        aria-label={store.voiceDeafened ? "Undeafen" : "Deafen"}
+        aria-label={store.deafenLabel}
         aria-pressed={store.voiceDeafened}
-        use:tooltip={store.voiceDeafened ? "Undeafen" : "Deafen"}
+        use:tooltip={store.deafenLabel}
         onclick={() => store.toggleDeafen()}
       >
         <VoiceIcon kind="headphones" slashed={store.voiceDeafened} />
@@ -512,7 +465,7 @@
     user-select: none;
   }
 
-  .chevron { opacity: 0.7; flex-shrink: 0; }
+  .chevron { display: flex; opacity: 0.7; flex-shrink: 0; }
 
   .channel-row {
     display: flex;
@@ -542,6 +495,7 @@
   .channel-row.active:hover { background: #5355a0; }
 
   .ch-icon {
+    display: flex;
     flex-shrink: 0;
     color: #4a5168;
     transition: color 0.1s;
@@ -567,8 +521,6 @@
     margin: 1px 4px;
     padding: 4px 8px;
   }
-
-  .create-row .ch-icon { color: #4a5168; flex-shrink: 0; }
 
   .create-input {
     flex: 1;
@@ -629,18 +581,6 @@
 
   .participant.speaking .participant-name { color: #c8cde8; }
 
-  .live-badge {
-    flex-shrink: 0;
-    padding: 0 4px;
-    border-radius: 3px;
-    background: #d83c3e;
-    color: #fff;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    line-height: 16px;
-  }
-
   .status-icon {
     display: flex;
     flex-shrink: 0;
@@ -666,7 +606,7 @@
     gap: 8px;
   }
 
-  .ping { flex-shrink: 0; }
+  .ping { display: flex; flex-shrink: 0; }
   .q-good { color: #4ade80; }
   .q-poor { color: #facc15; }
   .q-lost { color: #f87171; }

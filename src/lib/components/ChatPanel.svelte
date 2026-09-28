@@ -1,8 +1,13 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
   import { API_BASE } from "$lib/config.js";
+  import { tooltip } from "$lib/tooltip.ts";
+  import Icon from "$lib/components/Icon.svelte";
 
   let msgEnd: HTMLDivElement | null = $state(null);
+  // Updated on scroll only; content growing (an image loading) fires no scroll event,
+  // so this still reflects where the reader was before the layout shifted.
+  let atBottom = true;
   let fileInput: HTMLInputElement | null = $state(null);
   let textarea: HTMLTextAreaElement | null = $state(null);
   let viewing: string | null = $state(null);
@@ -33,6 +38,16 @@
     return url.split("/").pop() ?? url;
   }
 
+  function onMessagesScroll(e: Event) {
+    const el = e.currentTarget as HTMLElement;
+    atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  }
+
+  // An image loading pushes content up; follow it only if the reader was at the bottom.
+  function onImageLoad() {
+    if (atBottom) msgEnd?.scrollIntoView({ block: "end" });
+  }
+
   // Scroll to bottom whenever messages change
   $effect(() => {
     store.messages;
@@ -51,7 +66,7 @@
 {#if store.activeChannel}
   <header class="main-header"># {store.activeChannel.name}</header>
 
-  <div class="messages">
+  <div class="messages" onscroll={onMessagesScroll}>
     {#each store.messages as msg (msg.id)}
       <div class="message">
         <div class="msg-meta">
@@ -73,14 +88,12 @@
               src="{API_BASE}{msg.attachment_url}"
               alt="attachment"
               loading="lazy"
-              onload={() => msgEnd?.scrollIntoView({ block: "end" })}
+              onload={onImageLoad}
             />
           </button>
         {:else if msg.attachment_url}
           <a class="msg-file" href="{API_BASE}{msg.attachment_url}" target="_blank" rel="noreferrer">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <path fill="currentColor" d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8.41a2 2 0 0 0-.59-1.41l-4.41-4.41A2 2 0 0 0 13.59 2H6Zm7 1.5V8a1 1 0 0 0 1 1h4.5L13 3.5Z" />
-            </svg>
+            <Icon name="file" size={16} />
             {fileName(msg.attachment_url)}
           </a>
         {/if}
@@ -89,13 +102,7 @@
     <div bind:this={msgEnd}></div>
   </div>
 
-  <form
-    class="chat-form"
-    onsubmit={(e) => {
-      e.preventDefault();
-      store.sendMessage();
-    }}
-  >
+  <div class="chat-form">
     <div class="text-area">
       {#if store.uploading || store.pendingAttachment || store.uploadError}
         <div class="attachments">
@@ -104,8 +111,8 @@
           {:else if store.uploadError}
             <div class="upload-status error">
               {store.uploadError}
-              <button type="button" class="tile-remove inline" title="Dismiss" onclick={() => (store.uploadError = "")}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path fill="currentColor" d="M17.3 18.7a1 1 0 0 0 1.4-1.4L13.42 12l5.3-5.3a1 1 0 0 0-1.42-1.4L12 10.58l-5.3-5.3a1 1 0 0 0-1.4 1.42L10.58 12l-5.3 5.3a1 1 0 1 0 1.42 1.4L12 13.42l5.3 5.3Z" /></svg>
+              <button type="button" class="dismiss-btn" aria-label="Dismiss" use:tooltip={"Dismiss"} onclick={() => (store.uploadError = "")}>
+                <Icon name="close" size={16} />
               </button>
             </div>
           {:else if store.pendingAttachment}
@@ -114,12 +121,18 @@
                 {#if store.pendingAttachment.type === "image"}
                   <img src="{API_BASE}{store.pendingAttachment.url}" alt={store.pendingAttachment.name} />
                 {:else}
-                  <svg width="48" height="48" viewBox="0 0 24 24" fill="none"><path fill="currentColor" d="M6 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8.41a2 2 0 0 0-.59-1.41l-4.41-4.41A2 2 0 0 0 13.59 2H6Zm7 1.5V8a1 1 0 0 0 1 1h4.5L13 3.5Z" /></svg>
+                  <Icon name="file" size={48} />
                 {/if}
               </div>
               <span class="tile-name">{store.pendingAttachment.name}</span>
-              <button type="button" class="tile-remove" title="Remove attachment" onclick={() => (store.pendingAttachment = null)}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path fill="currentColor" d="M14.25 1c.41 0 .75.34.75.75V3h5.25c.41 0 .75.34.75.75v.5c0 .41-.34.75-.75.75H3.75A.75.75 0 0 1 3 4.25v-.5c0-.41.34-.75.75-.75H9V1.75c0-.41.34-.75.75-.75h4.5ZM5.06 7a1 1 0 0 0-1 1.06l.76 12.13a3 3 0 0 0 3 2.81h8.36a3 3 0 0 0 3-2.81l.75-12.13a1 1 0 0 0-1-1.06H5.07Z" /></svg>
+              <button
+                type="button"
+                class="tile-remove"
+                aria-label="Remove attachment"
+                use:tooltip={"Remove attachment"}
+                onclick={() => (store.pendingAttachment = null)}
+              >
+                <Icon name="trash" size={18} />
               </button>
             </div>
           {/if}
@@ -132,13 +145,11 @@
           class="attach-btn"
           type="button"
           aria-label="Upload a file"
-          title="Upload a file"
+          use:tooltip={"Upload a file"}
           disabled={store.uploading}
           onclick={() => fileInput?.click()}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-            <path fill="currentColor" d="M13 3a1 1 0 1 0-2 0v8H3a1 1 0 1 0 0 2h8v8a1 1 0 0 0 2 0v-8h8a1 1 0 0 0 0-2h-8V3Z" />
-          </svg>
+          <Icon name="plus" />
         </button>
         <textarea
           class="msg-input"
@@ -151,7 +162,7 @@
         ></textarea>
       </div>
     </div>
-  </form>
+  </div>
 {:else}
   <div class="empty-state">Select a channel</div>
 {/if}
@@ -353,13 +364,18 @@
     background: #3a1c24;
   }
 
-  .tile-remove.inline {
-    position: static;
-    width: 24px;
-    height: 24px;
+  .dismiss-btn {
+    display: flex;
+    padding: 4px;
     border: none;
-    box-shadow: none;
+    border-radius: 4px;
     background: none;
+    color: #f87171;
+    cursor: pointer;
+  }
+
+  .dismiss-btn:hover {
+    background: #3a1c24;
   }
 
   .upload-status {

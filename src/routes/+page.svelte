@@ -49,16 +49,6 @@
 {/if}
 
 <style>
-  :global(*, *::before, *::after) { box-sizing: border-box; }
-  :global(html, body) {
-    height: 100%;
-    margin: 0;
-    background: #1a1b2e;
-    color: #d4d8f0;
-    font-family: system-ui, sans-serif;
-    font-size: 14px;
-  }
-
   .app {
     height: 100vh;
     display: flex;
@@ -70,7 +60,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: #1a1b2e;
   }
 
   .boot-error {
@@ -94,27 +83,4 @@
   }
 
   .boot-error button:hover { background: #2a1a1a; }
-
-  :global(.gc-tooltip) {
-    position: fixed;
-    z-index: 1000;
-    padding: 6px 10px;
-    border-radius: 6px;
-    background: #0f1020;
-    color: #e4e6f5;
-    font: 600 13px system-ui, sans-serif;
-    white-space: nowrap;
-    pointer-events: none;
-    box-shadow: 0 4px 14px #0008;
-  }
-
-  :global(.gc-tooltip::after) {
-    content: "";
-    position: absolute;
-    top: 100%;
-    left: var(--arrow-x, 50%);
-    transform: translateX(-50%);
-    border: 5px solid transparent;
-    border-top-color: #0f1020;
-  }
 </style>

@@ -1,12 +1,57 @@
 <!doctype html>
-<html lang="en" style="background: #1a1b2e">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gumcord</title>
+    <!-- Global styles live here (not in a component) so they apply before the app bundle loads. -->
     <style>
-      html, body { margin: 0; height: 100%; background: #1a1b2e; }
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #1a1b2e;
+        color: #d4d8f0;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+
+      /* Created by the tooltip action on <body>, outside any component. */
+      .gc-tooltip {
+        position: fixed;
+        z-index: 1000;
+        padding: 6px 10px;
+        border-radius: 6px;
+        background: #0f1020;
+        color: #e4e6f5;
+        font: 600 13px system-ui, sans-serif;
+        white-space: nowrap;
+        pointer-events: none;
+        box-shadow: 0 4px 14px #0008;
+      }
+      .gc-tooltip::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: var(--arrow-x, 50%);
+        transform: translateX(-50%);
+        border: 5px solid transparent;
+        border-top-color: #0f1020;
+      }
+
+      /* Shared by the sidebar member list and call-view stream tiles. */
+      .live-badge {
+        flex-shrink: 0;
+        padding: 1px 5px;
+        border-radius: 3px;
+        background: #d83c3e;
+        color: #fff;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        line-height: 14px;
+      }
 
       /* Scrollbars: rounded thumb floating in a transparent track. The transparent border insets the thumb. */
       ::-webkit-scrollbar { width: 14px; height: 14px; }

@@ -37,6 +37,9 @@ func initDB() {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
+		-- History loads read one channel's newest messages.
+		CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, id);
+
 		INSERT OR IGNORE INTO channels (name, kind) VALUES ('general','text'),('voice','voice');
 	`)
 	if err != nil {

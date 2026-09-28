@@ -1,6 +1,8 @@
 // Client-side voice activity detection. LiveKit's server-side active-speaker updates arrive
 // every ~400ms and are smoothed, which makes the speaking ring lag by about a second.
 
+import { audioContext, audioRunning } from "./audio.ts";
+
 const SPEAKING_DBFS = -45; // close to LiveKit's server default (35 dBov), with a little headroom
 const HOLD_MS       = 250; // keeps the ring on through the short gaps between words
 const POLL_MS       = 50;
@@ -13,7 +15,6 @@ interface Watched {
 }
 
 export class SpeakingDetector {
-  #ctx: AudioContext | null = null;
   #watched = new Map<string, Watched>();
   #timer: ReturnType<typeof setInterval> | null = null;
   #speaking = new Set<string>();
@@ -23,28 +24,14 @@ export class SpeakingDetector {
     this.#onChange = onChange;
   }
 
+  // Replaced (never mutated) on change, so callers can hand it straight to reactive state.
   get speaking(): ReadonlySet<string> {
     return this.#speaking;
   }
 
-  // Created without a user gesture (e.g. auto-rejoin after refresh), the context starts suspended.
-  get running() {
-    return this.#ctx?.state === "running";
-  }
-
-  prepare() {
-    this.#ctx ??= new AudioContext();
-  }
-
-  async resume() {
-    await this.#ctx?.resume();
-    this.#onChange();
-  }
-
   watch(id: string, track: MediaStreamTrack) {
     this.unwatch(id);
-    this.prepare();
-    const ctx = this.#ctx!;
+    const ctx = audioContext();
     const source = ctx.createMediaStreamSource(new MediaStream([track]));
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
@@ -58,7 +45,10 @@ export class SpeakingDetector {
     if (!w) return;
     w.source.disconnect();
     this.#watched.delete(id);
-    if (this.#speaking.delete(id)) this.#onChange();
+    if (this.#speaking.has(id)) {
+      this.#speaking = new Set([...this.#speaking].filter((s) => s !== id));
+      this.#onChange();
+    }
     if (this.#watched.size === 0 && this.#timer) {
       clearInterval(this.#timer);
       this.#timer = null;
@@ -69,13 +59,9 @@ export class SpeakingDetector {
     for (const id of [...this.#watched.keys()]) this.unwatch(id);
   }
 
-  dispose() {
-    this.clear();
-    void this.#ctx?.close();
-    this.#ctx = null;
-  }
-
   #tick() {
+    // A suspended context yields silence and a hidden window shows nothing, so skip the work.
+    if (!audioRunning() || document.hidden) return;
     const now = performance.now();
     const next = new Set<string>();
     for (const [id, w] of this.#watched) {
@@ -87,7 +73,9 @@ export class SpeakingDetector {
       if (dbfs > SPEAKING_DBFS) w.lastLoud = now;
       if (now - w.lastLoud < HOLD_MS) next.add(id);
     }
-    if (next.size !== this.#speaking.size || [...next].some((id) => !this.#speaking.has(id))) {
+    let changed = next.size !== this.#speaking.size;
+    if (!changed) for (const id of next) if (!this.#speaking.has(id)) { changed = true; break; }
+    if (changed) {
       this.#speaking = next;
       this.#onChange();
     }

@@ -3,20 +3,22 @@ import {
   type RemoteTrackPublication, type RoomOptions,
 } from "livekit-client";
 import { API_BASE, LIVEKIT_WS } from "./config.js";
+import { audioContext, audioRunning, resumeAudio } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
 import { playSound, preloadSounds } from "./sounds.ts";
 
 // rtcConfig is valid at runtime but missing from the SDK's exported types
 type RoomOptionsWithRtc = RoomOptions & { rtcConfig?: RTCConfiguration };
 
-interface Channel          { id: number; name: string; kind: string; }
+export type ChannelKind = "text" | "voice";
+export interface Channel { id: number; name: string; kind: ChannelKind; }
 type AttachmentType = "image" | "file";
 interface Message {
   id: number; channel_id: number; username: string; content: string; created_at: string;
   attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
-interface VoiceParticipant { identity: string; speaking: boolean; muted: boolean; deafened: boolean; }
+export interface VoiceParticipant { identity: string; muted: boolean; deafened: boolean; }
 // track is null until the viewer opts in to watching; loading covers the gap after they do.
 export interface ScreenStream { identity: string; local: boolean; track: Track | null; loading: boolean; }
 
@@ -33,6 +35,7 @@ interface VoicePrefs   { muted: boolean; deafened: boolean; }
 interface VoiceSession extends VoicePrefs { channelId: number; }
 
 const REQUEST_TIMEOUT_MS = 10_000;
+const UPLOAD_TIMEOUT_MS  = 120_000;
 
 // A stalled server should surface as an error, not an endless load.
 async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUEST_TIMEOUT_MS) {
@@ -46,6 +49,14 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUES
     clearTimeout(timer);
   }
 }
+
+const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
+  a.length === b.length
+  && a.every((p, i) => p.identity === b[i].identity && p.muted === b[i].muted && p.deafened === b[i].deafened);
+
+const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
+  a.length === b.length
+  && a.every((s, i) => s.identity === b[i].identity && s.track === b[i].track && s.loading === b[i].loading);
 
 class GumcordStore {
   // auth
@@ -73,26 +84,29 @@ class GumcordStore {
 
   // voice
   room:              Room | null          = $state(null);
-  voiceMuted                              = $state(false);
-  voiceParticipants: VoiceParticipant[]   = $state([]);
-  // Raw: tracks are LiveKit class instances and must not be proxied.
-  streams:           ScreenStream[]       = $state.raw([]);
-  screenSharing                           = $state(false);
-  readonly canScreenShare                 = typeof navigator.mediaDevices?.getDisplayMedia === "function";
   voiceChannel:      Channel | null       = $state(null);
   voiceQuality:      ConnectionQuality    = $state(ConnectionQuality.Unknown);
+  voiceMuted                              = $state(false);
+  voiceDeafened                           = $state(false);
   // Mic permission denied or no input device: user can listen but stays muted.
   micBlocked                              = $state(false);
-  voiceDeafened                           = $state(false);
   // Autoplay policy blocked playback (e.g. auto-rejoin after a refresh); needs a user gesture.
   audioBlocked                            = $state(false);
+  // Raw: rebuilt wholesale (and only on real change); streams hold LiveKit class instances that must not be proxied.
+  voiceParticipants: VoiceParticipant[]   = $state.raw([]);
+  streams:           ScreenStream[]       = $state.raw([]);
+  // Kept apart from voiceParticipants so a speaking tick doesn't re-render every row.
+  speaking:          ReadonlySet<string>  = $state.raw(new Set());
+  screenSharing                           = $derived(this.streams.some((s) => s.local));
+  readonly canScreenShare                 = typeof navigator.mediaDevices?.getDisplayMedia === "function";
+
   // The user's own mute choice, independent of deafen and mic-permission failures.
-  #wantMuted                              = false;
-  #joining                                = false;
-  #audioResumeArmed                       = false;
+  #wantMuted        = false;
+  #joining          = false;
+  #audioResumeArmed = false;
   // Local level detection drives the speaking ring; the server's slower updates are the fallback.
-  #speakingDetector                       = new SpeakingDetector(() => this.#refreshSpeaking());
-  #serverSpeaking                         = new Set<string>();
+  #speakingDetector = new SpeakingDetector(() => this.#refreshSpeaking());
+  #serverSpeaking   = new Set<string>();
 
   // private
   #ws:           WebSocket | null              = null;
@@ -101,13 +115,34 @@ class GumcordStore {
   #audioEls:     Map<string, HTMLAudioElement> = new Map();
   #fetchAbort:   AbortController | null        = null;
 
+  // Labels shared by the sidebar and call-view controls.
+  get muteLabel() {
+    return this.micBlocked ? "Microphone unavailable. Check permissions" : this.voiceMuted ? "Unmute" : "Mute";
+  }
+
+  get deafenLabel() {
+    return this.voiceDeafened ? "Undeafen" : "Deafen";
+  }
+
+  get shareLabel() {
+    if (!this.canScreenShare) return "Screen sharing isn't supported in this window";
+    return this.screenSharing ? "Stop sharing" : "Share your screen";
+  }
+
+  // Authenticated request: base URL, bearer token and a timeout.
+  #api(path: string, init: RequestInit = {}, ms?: number) {
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", `Bearer ${this.token}`);
+    return fetchWithTimeout(`${API_BASE}${path}`, { ...init, headers }, ms);
+  }
+
   // ── Auth ──────────────────────────────────────────────────
 
   async login() {
     this.loginError = "";
     let res: Response;
     try {
-      res = await fetch(`${API_BASE}/login`, {
+      res = await fetchWithTimeout(`${API_BASE}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: this.loginInput, password: this.passInput }),
@@ -162,9 +197,7 @@ class GumcordStore {
   async #boot() {
     let res: Response;
     try {
-      res = await fetchWithTimeout(`${API_BASE}/channels`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-      });
+      res = await this.#api("/channels");
     } catch {
       this.bootError = "Cannot reach server. Is the backend running?";
       return;
@@ -176,11 +209,13 @@ class GumcordStore {
     const savedId = Number(localStorage.getItem(CHANNEL_KEY));
     const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
               ?? this.channels.find((c) => c.kind === "text");
-    if (text) await this.selectChannel(text);
-    this.#openWS();
-    this.booted = true;
+    // Everything below only needs the channel list, so it runs while the messages load.
+    const messages = text ? this.selectChannel(text) : undefined;
     void preloadSounds();
+    this.#openWS();
     this.#restoreVoice();
+    await messages;
+    this.booted = true;
   }
 
   #restoreVoice() {
@@ -201,23 +236,20 @@ class GumcordStore {
     }
   }
 
+  #voicePrefs(): VoicePrefs {
+    return { muted: this.#wantMuted, deafened: this.voiceDeafened };
+  }
+
   #saveVoiceSession() {
     if (!this.voiceChannel) return;
-    const session: VoiceSession = {
-      channelId: this.voiceChannel.id,
-      muted:     this.#wantMuted,
-      deafened:  this.voiceDeafened,
-    };
+    const session: VoiceSession = { channelId: this.voiceChannel.id, ...this.#voicePrefs() };
     localStorage.setItem(VOICE_KEY, JSON.stringify(session));
   }
 
   destroy() {
     clearTimeout(this.#wsRetryTimer ?? undefined);
     this.#ws?.close();
-    this.#audioEls.forEach((el) => el.remove());
-    this.#audioEls.clear();
     this.room?.disconnect();
-    this.#speakingDetector.dispose();
   }
 
   // ── Channels / messages ───────────────────────────────────
@@ -235,20 +267,17 @@ class GumcordStore {
     localStorage.setItem(CHANNEL_KEY, String(ch.id));
 
     try {
-      const res = await fetchWithTimeout(`${API_BASE}/channels/${ch.id}/messages`, {
-        headers: { Authorization: `Bearer ${this.token}` },
-        signal: this.#fetchAbort.signal,
-      });
+      const res = await this.#api(`/channels/${ch.id}/messages`, { signal: this.#fetchAbort.signal });
       this.messages = res.ok ? await res.json() : [];
     } catch (err) {
       if ((err as Error).name !== "AbortError") this.messages = [];
     }
   }
 
-  async createChannel(name: string, kind: 'text' | 'voice') {
-    const res = await fetch(`${API_BASE}/channels`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
+  async createChannel(name: string, kind: ChannelKind) {
+    const res = await this.#api("/channels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, kind }),
     });
     if (!res.ok) return;
@@ -262,11 +291,7 @@ class GumcordStore {
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`${API_BASE}/upload`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${this.token}` },
-        body: form,
-      });
+      const res = await this.#api("/upload", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
       if (!res.ok) {
         this.uploadError = res.status === 413 ? "File too large (max 25 MB)." : "Upload failed.";
         return;
@@ -331,7 +356,7 @@ class GumcordStore {
     }
     if (!this.room) return this.joinVoice(ch);
     // Switching keeps mute/deafen and stays in the call view if that's where the user was.
-    const prefs = { muted: this.#wantMuted, deafened: this.voiceDeafened };
+    const prefs = this.#voicePrefs();
     const inCallView = this.mainView === "call";
     await this.leaveVoice();
     await this.joinVoice(ch, prefs);
@@ -350,9 +375,9 @@ class GumcordStore {
   }
 
   async #connectVoice(ch: Channel, prefs: Partial<VoicePrefs>) {
-    const res = await fetch(`${API_BASE}/voice/token`, {
+    const res = await this.#api("/voice/token", {
       method: "POST",
-      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ room: ch.name }),
     });
     if (!res.ok) return;
@@ -378,6 +403,11 @@ class GumcordStore {
     });
     r.on(RoomEvent.ParticipantDisconnected, () => {
       playSound("disconnect");
+      this.#updateParticipants(r);
+    });
+
+    r.on(RoomEvent.TrackPublished, (pub) => {
+      this.#autoSubscribe(pub);
       this.#updateParticipants(r);
     });
 
@@ -419,6 +449,16 @@ class GumcordStore {
       this.#updateParticipants(r);
     });
 
+    // Keep everyone's mute/deafen indicators current.
+    for (const ev of [
+      RoomEvent.TrackMuted,
+      RoomEvent.TrackUnmuted,
+      RoomEvent.TrackUnpublished,
+      RoomEvent.ParticipantAttributesChanged,
+    ] as const) {
+      r.on(ev, () => this.#updateParticipants(r));
+    }
+
     r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
       this.#serverSpeaking = new Set(speakers.map((p) => p.identity));
       this.#refreshSpeaking();
@@ -430,31 +470,16 @@ class GumcordStore {
 
     r.on(RoomEvent.AudioPlaybackStatusChanged, () => this.#syncAudioPlayback(r));
 
-    r.on(RoomEvent.TrackPublished, (pub) => this.#autoSubscribe(pub));
-
-    // Keep everyone's mute/deafen indicators current.
-    for (const ev of [
-      RoomEvent.TrackMuted,
-      RoomEvent.TrackUnmuted,
-      RoomEvent.TrackPublished,
-      RoomEvent.TrackUnpublished,
-      RoomEvent.ParticipantAttributesChanged,
-    ] as const) {
-      r.on(ev, () => this.#updateParticipants(r));
-    }
-
     // Disconnects we didn't ask for (page unload, network drop) keep the saved session so a refresh rejoins.
     r.on(RoomEvent.Disconnected, (reason) => {
       // Our own leave plays its sound in leaveVoice; page unloads are client-initiated too and stay silent.
       if (reason !== DisconnectReason.CLIENT_INITIATED) playSound("disconnect");
-      this.#audioEls.forEach((el) => el.remove());
-      this.#audioEls.clear();
       this.#resetVoice();
     });
 
     // Set before connecting so tracks subscribed during connect are attached already muted.
     this.voiceDeafened = prefs.deafened ?? false;
-    this.#speakingDetector.prepare();
+    audioContext();
     try {
       // Manual subscriptions: voice is always received, screen shares only once someone chooses to watch.
       await r.connect(LIVEKIT_WS, lkToken, { autoSubscribe: false });
@@ -467,8 +492,7 @@ class GumcordStore {
     for (const p of r.remoteParticipants.values()) {
       for (const pub of p.trackPublications.values()) this.#autoSubscribe(pub);
     }
-    void preloadSounds().then(() => playSound("connect"));
-    this.#updateParticipants(r);
+    playSound("connect");
     this.#syncAudioPlayback(r);
 
     this.#wantMuted = prefs.muted ?? false;
@@ -487,8 +511,8 @@ class GumcordStore {
 
   #syncAudioPlayback(r: Room) {
     this.audioBlocked = !r.canPlaybackAudio;
-    // A suspended level-detection context doesn't block hearing anyone, so it doesn't set audioBlocked.
-    if (this.audioBlocked || !this.#speakingDetector.running) this.#armAudioResume();
+    // A suspended shared context doesn't block hearing anyone, so it doesn't set audioBlocked.
+    if (this.audioBlocked || !audioRunning()) this.#armAudioResume();
   }
 
   // Autoplay needs a user gesture, so the first click or key press anywhere resumes playback.
@@ -509,10 +533,11 @@ class GumcordStore {
     const r = this.room;
     if (!r) return;
     try {
-      await Promise.all([r.startAudio(), this.#speakingDetector.resume()]);
+      await Promise.all([r.startAudio(), resumeAudio()]);
     } catch {
       // Still blocked; #syncAudioPlayback re-arms below.
     }
+    this.#refreshSpeaking();
     this.#syncAudioPlayback(r);
   }
 
@@ -520,13 +545,17 @@ class GumcordStore {
     localStorage.removeItem(VOICE_KEY);
     if (!this.room) return;
     playSound("disconnect");
-    this.#audioEls.forEach((el) => el.remove());
-    this.#audioEls.clear();
     await this.room.disconnect();
     this.#resetVoice();
   }
 
+  // Idempotent: runs from leaveVoice and again from the Disconnected event.
   #resetVoice() {
+    this.#audioEls.forEach((el) => el.remove());
+    this.#audioEls.clear();
+    this.#speakingDetector.clear();
+    this.#serverSpeaking   = new Set();
+    this.#wantMuted        = false;
     this.mainView          = "chat";
     this.room              = null;
     this.voiceChannel      = null;
@@ -537,10 +566,7 @@ class GumcordStore {
     this.voiceQuality      = ConnectionQuality.Unknown;
     this.voiceParticipants = [];
     this.streams           = [];
-    this.screenSharing     = false;
-    this.#wantMuted        = false;
-    this.#serverSpeaking   = new Set();
-    this.#speakingDetector.clear();
+    this.speaking          = new Set();
   }
 
   async toggleDeafen() {
@@ -604,17 +630,19 @@ class GumcordStore {
 
   watchStream(identity: string) {
     for (const pub of this.#screenPublications(identity)) pub?.setSubscribed(true);
-    if (this.room) this.#updateStreams(this.room);
+    this.#updateStreams(this.room);
   }
 
   stopWatching(identity: string) {
     for (const pub of this.#screenPublications(identity)) pub?.setSubscribed(false);
-    if (this.room) this.#updateStreams(this.room);
+    this.#updateStreams(this.room);
   }
 
+  // Starting a share also opens the call view, so you can see what you're sharing.
   async toggleScreenShare() {
     if (!this.room || !this.canScreenShare) return;
     const on = !this.screenSharing;
+    if (on) this.mainView = "call";
     try {
       await this.room.localParticipant.setScreenShareEnabled(
         on,
@@ -625,41 +653,34 @@ class GumcordStore {
       // Closing the picker rejects with NotAllowedError: a cancel, not a failure.
       if ((err as Error).name !== "NotAllowedError") console.warn("Screen share failed:", err);
     }
-    this.#updateParticipants(this.room);
-  }
-
-  #speakingNow(): ReadonlySet<string> {
-    return this.#speakingDetector.running ? this.#speakingDetector.speaking : this.#serverSpeaking;
+    this.#updateStreams(this.room);
   }
 
   #refreshSpeaking() {
-    const speaking = this.#speakingNow();
-    if (this.voiceParticipants.every((p) => p.speaking === speaking.has(p.identity))) return;
-    this.voiceParticipants = this.voiceParticipants.map((p) => ({ ...p, speaking: speaking.has(p.identity) }));
+    this.speaking = audioRunning() ? this.#speakingDetector.speaking : this.#serverSpeaking;
   }
 
   #updateParticipants(r: Room | null) {
     if (!r) return;
-    const speaking = this.#speakingNow();
     const local = r.localParticipant;
-    this.voiceParticipants = [
+    const next: VoiceParticipant[] = [
       // Local state comes from the store so it updates before LiveKit round-trips.
-      { identity: local.identity, speaking: speaking.has(local.identity), muted: this.voiceMuted, deafened: this.voiceDeafened },
+      { identity: local.identity, muted: this.voiceMuted, deafened: this.voiceDeafened },
       ...Array.from(r.remoteParticipants.values(), (p) => ({
         identity: p.identity,
-        speaking: speaking.has(p.identity),
         // No published mic (never enabled, or permission denied) also counts as muted.
         muted:    !p.isMicrophoneEnabled,
         deafened: p.attributes[DEAFENED_ATTR] === "1",
       })),
     ];
+    if (!sameParticipants(next, this.voiceParticipants)) this.voiceParticipants = next;
     this.#updateStreams(r);
   }
 
-  #updateStreams(r: Room) {
+  #updateStreams(r: Room | null) {
+    if (!r) return;
     const next: ScreenStream[] = [];
     const localShare = r.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
-    this.screenSharing = !!localShare;
     if (localShare) next.push({ identity: r.localParticipant.identity, local: true, track: localShare, loading: false });
     for (const p of r.remoteParticipants.values()) {
       const pub = p.getTrackPublication(Track.Source.ScreenShare);
@@ -667,13 +688,8 @@ class GumcordStore {
       const track = pub.isSubscribed ? (pub.track ?? null) : null;
       next.push({ identity: p.identity, local: false, track, loading: pub.isDesired && !track });
     }
-    // Only replace the array on a real change, so video elements aren't re-rendered on every event.
-    const same = next.length === this.streams.length
-      && next.every((s, i) => {
-        const prev = this.streams[i];
-        return s.identity === prev.identity && s.track === prev.track && s.loading === prev.loading;
-      });
-    if (!same) this.streams = next;
+    // Only replace on a real change, so video elements aren't re-rendered on every event.
+    if (!sameStreams(next, this.streams)) this.streams = next;
   }
 }
 

@@ -38,6 +38,9 @@ const ctxUsername ctxKey = "username"
 
 func main() {
 	initDB()
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		log.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login", handleLogin)
@@ -47,7 +50,7 @@ func main() {
 	mux.HandleFunc("GET /ws", guard(handleWS))
 	mux.HandleFunc("POST /voice/token", guard(handleVoiceToken))
 	mux.HandleFunc("POST /upload", guard(handleUpload))
-	mux.Handle("GET /files/", http.StripPrefix("/files/", http.FileServer(noDirFS{http.Dir(uploadDir)})))
+	mux.Handle("GET /files/", serveUploads())
 
 	log.Println("backend listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
@@ -100,6 +103,35 @@ func guard(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// --- helpers ---
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
+}
+
+func serverError(w http.ResponseWriter, err error) {
+	log.Printf("server error: %v", err)
+	http.Error(w, "server error", http.StatusInternalServerError)
+}
+
+type channel struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
+// wsMsg is a chat message as sent to clients, both live over the WebSocket and in history.
+type wsMsg struct {
+	ID             int64  `json:"id"`
+	ChannelID      int64  `json:"channel_id"`
+	Username       string `json:"username"`
+	Content        string `json:"content"`
+	CreatedAt      string `json:"created_at"`
+	AttachmentURL  string `json:"attachment_url,omitempty"`
+	AttachmentType string `json:"attachment_type,omitempty"`
+}
+
 // --- handlers ---
 
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +149,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := db.Exec(`INSERT OR IGNORE INTO users (username) VALUES (?)`, body.Username); err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 
@@ -128,18 +160,17 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	signed, err := tok.SignedString(jwtSecret)
 	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": signed})
+	writeJSON(w, map[string]string{"token": signed})
 }
 
 func handleChannels(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`SELECT id, name, kind FROM channels ORDER BY id`)
 	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -148,11 +179,6 @@ func handleChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type channel struct {
-		ID   int64  `json:"id"`
-		Name string `json:"name"`
-		Kind string `json:"kind"`
-	}
 	out := []channel{}
 	for rows.Next() {
 		var c channel
@@ -160,8 +186,7 @@ func handleChannels(w http.ResponseWriter, r *http.Request) {
 		out = append(out, c)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	writeJSON(w, out)
 }
 
 func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
@@ -169,36 +194,34 @@ func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		Kind string `json:"kind"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
+	err := json.NewDecoder(r.Body).Decode(&body)
+	c := channel{Name: strings.TrimSpace(body.Name), Kind: body.Kind}
+	if err != nil || c.Name == "" {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if body.Kind != "text" && body.Kind != "voice" {
+	if c.Kind != "text" && c.Kind != "voice" {
 		http.Error(w, "invalid kind", http.StatusBadRequest)
 		return
 	}
 
-	res, err := db.Exec(`INSERT INTO channels (name, kind) VALUES (?, ?)`, strings.TrimSpace(body.Name), body.Kind)
-	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+	if err := db.QueryRow(`INSERT INTO channels (name, kind) VALUES (?, ?) RETURNING id`, c.Name, c.Kind).Scan(&c.ID); err != nil {
+		serverError(w, err)
 		return
 	}
-	id, _ := res.LastInsertId()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": strings.TrimSpace(body.Name), "kind": body.Kind})
+	writeJSON(w, c)
 }
 
 func handleMessages(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
-		SELECT m.id, m.content, u.username, m.created_at,
+		SELECT m.id, m.channel_id, u.username, m.content, m.created_at,
 		       COALESCE(m.attachment_url, ''), COALESCE(m.attachment_type, '')
 		FROM messages m JOIN users u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
 	`, r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -207,18 +230,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type message struct {
-		ID             int64  `json:"id"`
-		Content        string `json:"content"`
-		Username       string `json:"username"`
-		CreatedAt      string `json:"created_at"`
-		AttachmentURL  string `json:"attachment_url,omitempty"`
-		AttachmentType string `json:"attachment_type,omitempty"`
-	}
-	msgs := []message{}
+	msgs := []wsMsg{}
 	for rows.Next() {
-		var m message
-		rows.Scan(&m.ID, &m.Content, &m.Username, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
+		var m wsMsg
+		rows.Scan(&m.ID, &m.ChannelID, &m.Username, &m.Content, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
 		msgs = append(msgs, m)
 	}
 
@@ -227,18 +242,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(msgs)
-}
-
-type wsMsg struct {
-	ID             int64  `json:"id"`
-	ChannelID      int64  `json:"channel_id"`
-	Username       string `json:"username"`
-	Content        string `json:"content"`
-	CreatedAt      string `json:"created_at"`
-	AttachmentURL  string `json:"attachment_url,omitempty"`
-	AttachmentType string `json:"attachment_type,omitempty"`
+	writeJSON(w, msgs)
 }
 
 func handleWS(w http.ResponseWriter, r *http.Request) {
@@ -282,29 +286,23 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		res, err := db.Exec(
+		msg := wsMsg{
+			ChannelID:      in.ChannelID,
+			Username:       username,
+			Content:        in.Content,
+			AttachmentURL:  in.AttachmentURL,
+			AttachmentType: in.AttachmentType,
+		}
+		err := db.QueryRow(
 			`INSERT INTO messages (channel_id, user_id, content, attachment_url, attachment_type)
-			 VALUES (?, ?, ?, NULLIF(?, ''), NULLIF(?, ''))`,
+			 VALUES (?, ?, ?, ?, ?) RETURNING id, created_at`,
 			in.ChannelID, userID, in.Content, in.AttachmentURL, in.AttachmentType,
-		)
+		).Scan(&msg.ID, &msg.CreatedAt)
 		if err != nil {
 			log.Printf("insert message: %v", err)
 			continue
 		}
-
-		id, _ := res.LastInsertId()
-		var createdAt string
-		db.QueryRow(`SELECT created_at FROM messages WHERE id = ?`, id).Scan(&createdAt)
-
-		hub.broadcast(wsMsg{
-			ID:             id,
-			ChannelID:      in.ChannelID,
-			Username:       username,
-			Content:        in.Content,
-			CreatedAt:      createdAt,
-			AttachmentURL:  in.AttachmentURL,
-			AttachmentType: in.AttachmentType,
-		})
+		hub.broadcast(msg)
 	}
 }
 
@@ -339,12 +337,11 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	})
 	signed, err := tok.SignedString([]byte(lkAPISecret))
 	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"token": signed})
+	writeJSON(w, map[string]string{"token": signed})
 }
 
 const (
@@ -367,8 +364,25 @@ func (fs noDirFS) Open(name string) (http.File, error) {
 	return f, nil
 }
 
+func serveUploads() http.Handler {
+	files := http.StripPrefix("/files/", http.FileServer(noDirFS{http.Dir(uploadDir)}))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Upload names are random and never reused, so a file can be cached forever.
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		files.ServeHTTP(w, r)
+	})
+}
+
+// Multipart parts beyond this spill to temp files instead of sitting in memory.
+const uploadMemory = 1 << 20
+
 func handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+	if err := r.ParseMultipartForm(uploadMemory); err != nil {
+		http.Error(w, "file missing or too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "file missing or too large", http.StatusRequestEntityTooLarge)
@@ -380,7 +394,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	n, _ := io.ReadFull(file, head)
 	mime := http.DetectContentType(head[:n])
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 
@@ -394,24 +408,19 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	rand.Read(rnd)
 	name := hex.EncodeToString(rnd) + strings.ToLower(filepath.Ext(header.Filename))
 
-	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
-		return
-	}
 	dst, err := os.Create(filepath.Join(uploadDir, name))
 	if err != nil {
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 	defer dst.Close()
 	if _, err := io.Copy(dst, file); err != nil {
 		os.Remove(dst.Name())
-		http.Error(w, "server error", http.StatusInternalServerError)
+		serverError(w, err)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, map[string]string{
 		"url":  "/files/" + name,
 		"type": kind,
 		"name": header.Filename,
