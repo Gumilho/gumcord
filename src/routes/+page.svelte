@@ -4,6 +4,7 @@
   import Login from '$lib/components/Login.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import CallPanel from '$lib/components/CallPanel.svelte';
 
   onMount(() => { if (store.token) store.boot(); });
   onDestroy(() => store.destroy());
@@ -35,7 +36,11 @@
     <div class="app">
       <Sidebar />
       <main class="main">
-        <ChatPanel />
+        {#if store.mainView === "call" && store.room}
+          <CallPanel />
+        {:else}
+          <ChatPanel />
+        {/if}
       </main>
     </div>
   {/if}

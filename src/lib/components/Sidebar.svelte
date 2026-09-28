@@ -107,11 +107,12 @@
   function onChannelContext(e: MouseEvent, ch: Channel) {
     e.stopPropagation();
     if (ch.kind === 'voice') {
-      openMenu(e, [
-        store.room
-          ? { label: 'Leave Channel', action: () => store.leaveVoice(), danger: true }
-          : { label: 'Join Channel', action: () => store.joinVoice(ch) },
-      ]);
+      openMenu(e, store.voiceChannel?.id === ch.id
+        ? [
+            { label: 'Open Call', action: () => store.openVoiceChannel(ch) },
+            { label: 'Leave Channel', action: () => store.leaveVoice(), danger: true },
+          ]
+        : [{ label: store.room ? 'Switch to Channel' : 'Join Channel', action: () => store.openVoiceChannel(ch) }]);
     } else {
       e.preventDefault(); // suppress browser menu for text channels
     }
@@ -167,7 +168,7 @@
     {#each store.channels.filter((c) => c.kind === "text") as ch (ch.id)}
       <button
         class="channel-row"
-        class:active={store.activeChannel?.id === ch.id}
+        class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
         onclick={() => store.selectChannel(ch)}
         oncontextmenu={(e) => onChannelContext(e, ch)}
       >
@@ -206,8 +207,9 @@
     {#each store.channels.filter((c) => c.kind === "voice") as ch (ch.id)}
       <button
         class="channel-row voice-channel"
-        class:in-voice={!!store.room}
-        onclick={() => { if (!store.room) store.joinVoice(ch); }}
+        class:in-voice={store.voiceChannel?.id === ch.id}
+        class:active={store.mainView === "call" && store.voiceChannel?.id === ch.id}
+        onclick={() => store.openVoiceChannel(ch)}
         oncontextmenu={(e) => onChannelContext(e, ch)}
       >
         <svg class="ch-icon" width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -218,7 +220,7 @@
       </button>
 
       <!-- Participants -->
-      {#if store.room && store.voiceParticipants.length > 0}
+      {#if store.voiceChannel?.id === ch.id && store.voiceParticipants.length > 0}
         <ul class="participants">
           {#each store.voiceParticipants as p (p.identity)}
             <li class="participant" class:speaking={p.speaking}>

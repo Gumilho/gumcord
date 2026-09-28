@@ -63,6 +63,9 @@ class GumcordStore {
   uploading   = $state(false);
   uploadError = $state("");
 
+  // Main pane: the selected text channel, or the call view of the connected voice channel.
+  mainView: "chat" | "call" = $state("chat");
+
   // voice
   room:              Room | null          = $state(null);
   voiceMuted                              = $state(false);
@@ -217,6 +220,7 @@ class GumcordStore {
     this.#fetchAbort?.abort();
     this.#fetchAbort = new AbortController();
     this.activeChannel     = ch;
+    this.mainView          = "chat";
     this.pendingAttachment = null;
     this.uploadError       = "";
     localStorage.setItem(CHANNEL_KEY, String(ch.id));
@@ -309,6 +313,21 @@ class GumcordStore {
   }
 
   // ── Voice ─────────────────────────────────────────────────
+
+  // Clicking a voice channel: join it, open its call view if already in it, or switch to it.
+  async openVoiceChannel(ch: Channel) {
+    if (this.voiceChannel?.id === ch.id) {
+      this.mainView = "call";
+      return;
+    }
+    if (!this.room) return this.joinVoice(ch);
+    // Switching keeps mute/deafen and stays in the call view if that's where the user was.
+    const prefs = { muted: this.#wantMuted, deafened: this.voiceDeafened };
+    const inCallView = this.mainView === "call";
+    await this.leaveVoice();
+    await this.joinVoice(ch, prefs);
+    if (inCallView && this.room) this.mainView = "call";
+  }
 
   async joinVoice(ch: Channel, prefs: Partial<VoicePrefs> = {}) {
     // Guard against a click racing the auto-rejoin and opening two rooms.
@@ -487,6 +506,7 @@ class GumcordStore {
   }
 
   #resetVoice() {
+    this.mainView          = "chat";
     this.room              = null;
     this.voiceChannel      = null;
     this.voiceMuted        = false;
