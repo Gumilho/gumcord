@@ -18,22 +18,25 @@
   const cols = $derived(count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
   const rows = $derived(Math.max(1, Math.ceil(count / cols)));
 
-  // Focused screen share: fills the stage, everyone else moves to a strip underneath.
-  // A stream that ended or is no longer being watched simply stops matching.
+  // Streams you're watching take the stage, side by side, and everyone else moves to a strip
+  // underneath. Clicking one focuses it alone; clicking again goes back to all of them. Your own
+  // screen stays in the strip unless you focus it. A stream that ended or is no longer being
+  // watched simply stops matching.
   let focusedId: string | null = $state(null);
   const focused = $derived(
     store.streams.find((s) => s.identity === focusedId && (s.track || s.loading)) ?? null,
   );
-  const tiledStreams = $derived(focused ? store.streams.filter((s) => s !== focused) : store.streams);
+  const featured = $derived(focused ? [focused] : store.streams.filter((s) => !s.local && (s.track || s.loading)));
+  const tiledStreams = $derived(store.streams.filter((s) => !featured.includes(s)));
 
   function toggleFocus(s: ScreenStream) {
     focusedId = focusedId === s.identity ? null : s.identity;
   }
 
-  // Opting in to a stream also puts it front and centre, like Discord.
+  // Opting in to a stream puts it on the stage, next to any others you're watching.
   function watch(s: ScreenStream) {
     store.watchStream(s.identity);
-    focusedId = s.identity;
+    focusedId = null;
   }
 
   function stopWatching(s: ScreenStream) {
@@ -112,21 +115,26 @@
 
   {#snippet streamTile(s: ScreenStream, spotlight: boolean)}
     {@const streamMuted = !s.local && store.userAudioFor(s.identity).streamMuted}
+    {@const isFocused = focused === s}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="tile stream"
       class:spotlight
+      class:focused={isFocused}
       style="--hue: {hue(s.name)}"
       oncontextmenu={(e) => { if (!s.local) store.openUserMenu(e, s, "stream"); }}
     >
       {#if s.track}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="tile-video" use:attachVideo={s.track} autoplay playsinline muted></video>
-        <button
-          class="tile-hit"
-          aria-label={t(spotlight ? "Stop focusing {stream}" : "Focus {stream}", { stream: streamLabel(s) })}
-          onclick={() => toggleFocus(s)}
-        ></button>
+        <!-- Alone on the stage there's nothing to focus. -->
+        {#if !spotlight || featured.length > 1 || isFocused}
+          <button
+            class="tile-hit"
+            aria-label={t(isFocused ? "Stop focusing {stream}" : "Focus {stream}", { stream: streamLabel(s) })}
+            onclick={() => toggleFocus(s)}
+          ></button>
+        {/if}
         <div class="tile-actions">
           {#if !s.local}
             <button class="tile-action" aria-label={t("Stream volume")} use:tooltip={t("Stream volume")} onclick={(e) => store.openUserMenu(e, s, "stream")}>
@@ -161,13 +169,17 @@
   <!-- The header spans the call and the member list, as in the chat view. -->
   <div class="call-body">
     <div class="call-column">
-      <div class="stage" class:focus={!!focused}>
-        {#if focused}
+      <div class="stage" class:focus={featured.length > 0}>
+        {#if featured.length}
           <div class="spotlight-area">
-            {@render streamTile(focused, true)}
+            <div class="featured" class:multi={featured.length > 1} style:--n={featured.length} style:--rows={Math.ceil(featured.length / 2)}>
+              {#each featured as s (s.identity)}
+                {@render streamTile(s, true)}
+              {/each}
+            </div>
           </div>
         {/if}
-        <div class:grid={!focused} class:strip={!!focused} style:--cols={cols} style:--rows={rows}>
+        <div class:grid={!featured.length} class:strip={featured.length > 0} style:--cols={cols} style:--rows={rows}>
           {#each tiledStreams as s (s.identity)}
             {@render streamTile(s, false)}
           {/each}
@@ -357,6 +369,38 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    align-items: center;
+    justify-content: center;
+    container-type: size;
+  }
+
+  .featured {
+    display: flex;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Several streams: two across (a grid for three or four), or stacked when the stage is tall;
+     16:9 tiles as large as fit, like the call grid. */
+  .featured.multi {
+    --gap: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--gap);
+    height: auto;
+    width: min(100%, calc((100cqh - (var(--rows) - 1) * var(--gap)) / var(--rows) * 16 / 9 * 2 + var(--gap)));
+  }
+
+  .featured.multi .tile.spotlight {
+    aspect-ratio: 16 / 9;
+    height: auto;
+  }
+
+  @container (aspect-ratio < 1.1) {
+    .featured.multi {
+      grid-template-columns: minmax(0, 1fr);
+      width: min(100%, calc((100cqh - (var(--n) - 1) * var(--gap)) / var(--n) * 16 / 9));
+    }
   }
 
   .strip {
@@ -406,7 +450,7 @@
     cursor: pointer;
   }
 
-  .tile.spotlight .tile-hit {
+  .tile.focused .tile-hit {
     cursor: zoom-out;
   }
 
