@@ -9,6 +9,7 @@
   import UserSettings from "$lib/components/UserSettings.svelte";
   import Soundboard from "$lib/components/Soundboard.svelte";
   import ChannelSettings from "$lib/components/ChannelSettings.svelte";
+  import { mobile, showMain } from "$lib/mobile.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
@@ -213,7 +214,7 @@
         <button
           class="channel-row"
           class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
-          onclick={() => store.selectChannel(ch)}
+          onclick={() => { void store.selectChannel(ch); showMain(); }}
           oncontextmenu={(e) => onChannelContext(e, ch)}
         >
           <span class="ch-icon"><Icon name="hash" size={18} /></span>
@@ -239,7 +240,7 @@
           class="channel-row voice-channel"
           class:in-voice={store.voiceChannel?.id === ch.id}
           class:active={store.mainView === "call" && store.voiceChannel?.id === ch.id}
-          onclick={() => store.openVoiceChannel(ch)}
+          onclick={() => { void store.openVoiceChannel(ch, mobile.narrow); showMain(); }}
           oncontextmenu={(e) => onChannelContext(e, ch)}
         >
           <span class="ch-icon"><Icon name="speaker" size={18} /></span>
@@ -454,6 +455,16 @@
   }
 
   /* ── Resize handle ── */
+  /* Phones: the sidebar is the whole navigation pane beside the server list. */
+  @media (max-width: 768px) {
+    .sidebar {
+      flex: 1;
+      width: auto !important; /* over the desktop's resizable width, set inline */
+    }
+
+    .resize-rail { display: none; }
+  }
+
   .resize-rail {
     position: relative;
     width: 0;

@@ -7,6 +7,7 @@
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
   import MessageContent from "$lib/components/MessageContent.svelte";
   import EmotePicker from "$lib/components/EmotePicker.svelte";
+  import BackButton from "$lib/components/BackButton.svelte";
   import { t } from "$lib/i18n.svelte.ts";
 
   let msgEnd: HTMLDivElement | null = $state(null);
@@ -210,6 +211,7 @@
 
 {#if store.activeChannel}
   <header class="main-header">
+    <BackButton />
     <span class="header-title"># {store.activeChannel.name}</span>
     <MemberListToggle />
   </header>
@@ -381,6 +383,7 @@
     {/if}
   </div>
 {:else}
+  <header class="main-header empty"><BackButton /></header>
   <div class="empty-state">
     {#if store.servers.length === 0}
       {t(store.me?.admin
@@ -862,6 +865,13 @@
 
   .msg-file:hover {
     text-decoration: underline;
+  }
+
+  /* Only there for the back button on phones. */
+  .main-header.empty { display: none; }
+
+  @media (max-width: 768px) {
+    .main-header.empty { display: flex; }
   }
 
   .empty-state {

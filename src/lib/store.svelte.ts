@@ -222,7 +222,8 @@ class GumcordStore {
 
   // The user's own mute choice, independent of deafen and mic-permission failures.
   #wantMuted        = false;
-  #joining          = false;
+  // The join under way, if any: a click during the auto-rejoin waits for it instead of opening a second room.
+  #joining: Promise<void> | null = null;
   #audioResumeArmed = false;
   // Local level detection drives the speaking ring; the server's slower updates are the fallback.
   #speakingDetector = new SpeakingDetector(() => this.#refreshSpeaking());
@@ -862,31 +863,40 @@ class GumcordStore {
   // ── Voice ─────────────────────────────────────────────────
 
   // Clicking a voice channel: join it, open its call view if already in it, or switch to it.
-  async openVoiceChannel(ch: Channel) {
+  // Joins a voice channel, or opens the call view when you're already in it. showCall opens the call
+  // view straight away (on a phone the sidebar, and the call's panel in it, are out of sight).
+  async openVoiceChannel(ch: Channel, showCall = false) {
+    if (this.#joining) await this.#joining;
     if (this.voiceChannel?.id === ch.id) {
       this.mainView = "call";
       return;
     }
-    if (!this.room) return this.joinVoice(ch);
+    if (!this.room) {
+      await this.joinVoice(ch);
+      if (showCall && this.voiceChannel?.id === ch.id) this.mainView = "call";
+      return;
+    }
     // Switching keeps mute/deafen and stays in the call view if that's where the user was.
     const prefs = this.#voicePrefs();
     const inCallView = this.mainView === "call";
     await this.leaveVoice();
     await this.joinVoice(ch, prefs);
-    if (inCallView && this.room) this.mainView = "call";
+    if ((inCallView || showCall) && this.room) this.mainView = "call";
   }
 
   async joinVoice(ch: Channel, prefs: Partial<VoicePrefs> = {}) {
-    // Guard against a click racing the auto-rejoin and opening two rooms.
-    if (this.room || this.#joining) return;
-    this.#joining = true;
-    try {
-      await this.#connectVoice(ch, prefs);
-    } catch (err) {
-      console.warn("Couldn't join voice:", err);
-    } finally {
-      this.#joining = false;
-    }
+    if (this.#joining) return this.#joining;
+    if (this.room) return;
+    this.#joining = (async () => {
+      try {
+        await this.#connectVoice(ch, prefs);
+      } catch (err) {
+        console.warn("Couldn't join voice:", err);
+      } finally {
+        this.#joining = null;
+      }
+    })();
+    return this.#joining;
   }
 
   async #connectVoice(ch: Channel, prefs: Partial<VoicePrefs>) {

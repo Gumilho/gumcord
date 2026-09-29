@@ -9,6 +9,15 @@
     <!-- Global styles live here (not in a component) so they apply before the app bundle loads. -->
     <style>
       *, *::before, *::after { box-sizing: border-box; }
+      /* Scrolling boxes (the message box, the chat) would otherwise hand a sideways swipe on to the
+         browser's back gesture; see the note on html, body. */
+      * { overscroll-behavior-x: none; }
+      /* Phones: sideways swipes switch panes, so the browser only pans vertically (and zooms) and
+         can't turn one into its own back gesture. Set on every element because each scrolling box
+         starts its own; the call's side-scrolling strip opts back in. */
+      @media (max-width: 768px) {
+        * { touch-action: pan-y pinch-zoom; }
+      }
       html, body {
         height: 100%;
         margin: 0;
@@ -16,6 +25,9 @@
         color: #d4d8f0;
         font-family: system-ui, sans-serif;
         font-size: 14px;
+        /* No swipe-to-go-back or pull-to-refresh: sideways swipes switch panes on phones, and a
+           reload would drop the call. */
+        overscroll-behavior: none;
       }
 
       /* Created by the tooltip action on <body>, outside any component. */

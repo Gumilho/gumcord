@@ -20,6 +20,7 @@
 </button>
 
 <style>
+
   .toggle {
     display: flex;
     padding: 4px;
@@ -33,4 +34,9 @@
 
   .toggle:hover,
   .toggle.active { color: #e4e6f5; }
+
+  /* No room beside the chat on a phone. */
+  @media (max-width: 768px) {
+    .toggle { display: none; }
+  }
 </style>

@@ -9,6 +9,7 @@
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
   import Soundboard from "$lib/components/Soundboard.svelte";
+  import BackButton from "$lib/components/BackButton.svelte";
   import { t } from "$lib/i18n.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
@@ -74,6 +75,7 @@
 
 <div class="call">
   <header class="call-header">
+    <BackButton />
     <span class="header-icon"><Icon name="speaker" /></span>
     <span class="header-title">{store.voiceChannel?.name}</span>
     <MemberListToggle />
@@ -404,6 +406,7 @@
   }
 
   .strip {
+    touch-action: pan-x pan-y pinch-zoom !important; /* scrolls sideways on phones: over the global pan-y */
     flex-shrink: 0;
     height: 112px;
     display: flex;

@@ -9,6 +9,7 @@
   import ServerRail from '$lib/components/ServerRail.svelte';
   import { installShortcuts } from '$lib/shortcuts.svelte.ts';
   import { t } from '$lib/i18n.svelte.ts';
+  import { mobile, showMain, showNav, swipeEnd, swipeStart } from '$lib/mobile.svelte.ts';
 
   onMount(() => {
     void store.boot();
@@ -41,10 +42,25 @@
 {:else if store.signedOut}
   <Login />
 {:else if store.me}
-  <div class="app">
-    <ServerRail />
-    <Sidebar />
-    <main class="main">
+  <div class="app" class:show-nav={mobile.pane === "nav"}>
+    <!-- One pane on a phone, just the server list and sidebar side by side otherwise. The swipes
+         are shortcuts: the back button and the channel list do the same with a tap. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="nav-pane"
+      inert={mobile.narrow && mobile.pane === "main"}
+      ontouchstart={swipeStart}
+      ontouchend={(e) => { if (swipeEnd(e) < 0 && (store.activeChannel || store.room)) showMain(); }}
+    >
+      <ServerRail />
+      <Sidebar />
+    </div>
+    <main
+      class="main"
+      inert={mobile.narrow && mobile.pane === "nav"}
+      ontouchstart={swipeStart}
+      ontouchend={(e) => { if (swipeEnd(e) > 0) showNav(); }}
+    >
       {#if store.mainView === "call" && store.room}
         <CallPanel />
       {:else}
@@ -58,8 +74,30 @@
 <style>
   .app {
     height: 100vh;
+    height: 100dvh; /* phones: the visible height, without the browser's toolbars */
     display: flex;
     overflow: hidden;
+  }
+
+  .nav-pane { display: contents; }
+
+  /* Phones: the two panes stacked, sliding sideways. */
+  @media (max-width: 768px) {
+    .app { position: relative; }
+
+    .nav-pane, .main {
+      position: absolute;
+      inset: 0;
+      transition: transform 0.22s ease;
+    }
+
+    .nav-pane {
+      display: flex;
+      transform: translateX(-100%);
+    }
+
+    .app.show-nav .nav-pane { transform: none; }
+    .app.show-nav .main { transform: translateX(100%); }
   }
 
   .main {

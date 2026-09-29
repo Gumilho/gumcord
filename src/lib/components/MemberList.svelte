@@ -125,4 +125,9 @@
     display: flex;
     color: #4ade80;
   }
+
+  /* No room beside the chat on a phone. */
+  @media (max-width: 768px) {
+    .members { display: none; }
+  }
 </style>

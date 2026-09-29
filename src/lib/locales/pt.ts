@@ -131,6 +131,7 @@ export const pt: Record<string, string> = {
   "Change image": "Trocar imagem",
   "Channel settings": "Configurações do canal",
   "Edit": "Editar",
+  "Back to channels": "Voltar aos canais",
   "Video": "Vídeo",
   "Play {title}": "Reproduzir {title}",
   "Delete": "Excluir",
