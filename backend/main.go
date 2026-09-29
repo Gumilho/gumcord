@@ -81,6 +81,8 @@ func main() {
 	mux.HandleFunc("GET /api/user-audio", requireUser(handleUserAudio))
 	mux.HandleFunc("PUT /api/user-audio/{id}", requireUser(handleSetUserAudio))
 	mux.HandleFunc("POST /api/upload", requireUser(handleUpload))
+	mux.HandleFunc("GET /api/embed", requireUser(handleEmbed))
+	mux.HandleFunc("GET /api/embed/image", requireUser(handleEmbedImage))
 	mux.HandleFunc("GET /api/", http.NotFound) // keep unknown API paths out of the app fallback
 	mux.Handle("GET /files/", serveUploads())
 	// In production the backend also serves the built app; in development Vite does.

@@ -4,6 +4,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
+  import MessageContent from "$lib/components/MessageContent.svelte";
 
   let msgEnd: HTMLDivElement | null = $state(null);
   // Updated on scroll only; content growing (an image loading) fires no scroll event,
@@ -44,7 +45,7 @@
     atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
   }
 
-  // An image loading pushes content up; follow it only if the reader was at the bottom.
+  // An image or link preview appearing pushes content up; follow it only if the reader was at the bottom.
   function onImageLoad() {
     if (atBottom) msgEnd?.scrollIntoView({ block: "end" });
   }
@@ -80,9 +81,7 @@
               <span class="msg-author">{msg.author}</span>
               <span class="msg-time">{formatTime(msg.created_at)}</span>
             </div>
-            {#if msg.content}
-              <p class="msg-content">{msg.content}</p>
-            {/if}
+            <MessageContent content={msg.content} onresize={onImageLoad} onview={(src) => (viewing = src)} />
             {#if msg.attachment_url && msg.attachment_type === "image"}
               <button
                 class="msg-image-btn"
@@ -265,14 +264,6 @@
   .msg-time {
     font-size: 11px;
     color: #4a5168;
-  }
-
-  .msg-content {
-    margin: 0;
-    color: #c8cce8;
-    line-height: 1.5;
-    word-break: break-word;
-    white-space: pre-wrap;
   }
 
   /* ── Chat input (Discord layout) ── */
