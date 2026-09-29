@@ -4,6 +4,7 @@
   import { t } from "$lib/i18n.svelte.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
+  import { hue, initials } from "$lib/avatar.ts";
 
   // Admins only: rename a server, add and remove its members, or delete it.
   let { server, onclose }: { server: Server; onclose: () => void } = $props();
@@ -29,6 +30,15 @@
     return !error;
   }
 
+  let iconInput: HTMLInputElement | null = $state(null);
+
+  function pickIcon(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (file) void run(store.setServerIcon(server.id, file));
+  }
+
   async function rename(e: SubmitEvent) {
     e.preventDefault();
     if (name.trim() && name.trim() !== server.name) await run(store.renameServer(server.id, name.trim()));
@@ -48,6 +58,19 @@
 </script>
 
 <Modal title={t("Server settings")} {onclose}>
+  <div class="icon-row">
+    <div class="server-icon" style="--hue: {hue(server.name)}">
+      <UserAvatar name={server.name} src={server.icon} letters={initials(server.name)} />
+    </div>
+    <div class="icon-actions">
+      <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" bind:this={iconInput} onchange={pickIcon} />
+      <button class="primary" type="button" onclick={() => iconInput?.click()}>{t("Change image")}</button>
+      {#if server.icon}
+        <button class="link" type="button" onclick={() => run(store.removeServerIcon(server.id))}>{t("Remove image")}</button>
+      {/if}
+    </div>
+  </div>
+
   <form class="row" onsubmit={rename}>
     <label class="field">
       <span>{t("Server name")}</span>
@@ -95,6 +118,33 @@
 </Modal>
 
 <style>
+  .icon-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .server-icon {
+    width: 72px;
+    height: 72px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 20px;
+    background: hsl(var(--hue) 35% 32%);
+    color: #fff;
+    font: 700 24px system-ui, sans-serif;
+  }
+
+  .icon-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
   .row {
     display: flex;
     align-items: flex-end;
@@ -197,6 +247,7 @@
     padding: 2px 4px;
     border: none;
     background: none;
+    color: #a78bfa;
     font: inherit;
     font-size: 13px;
     cursor: pointer;

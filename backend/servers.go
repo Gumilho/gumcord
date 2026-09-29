@@ -17,6 +17,7 @@ import (
 type server struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+	Icon string `json:"icon"` // "" shows the name's initials
 }
 
 const maxNameLen = 64
@@ -124,9 +125,9 @@ func readName(w http.ResponseWriter, r *http.Request) (string, bool) {
 
 func handleServers(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
-	query, args := `SELECT s.id, s.name FROM servers s JOIN server_members m ON m.server_id = s.id WHERE m.user_id = ? ORDER BY s.id`, []any{u.ID}
+	query, args := `SELECT s.id, s.name, s.icon FROM servers s JOIN server_members m ON m.server_id = s.id WHERE m.user_id = ? ORDER BY s.id`, []any{u.ID}
 	if u.Admin {
-		query, args = `SELECT id, name FROM servers ORDER BY id`, nil
+		query, args = `SELECT id, name, icon FROM servers ORDER BY id`, nil
 	}
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -137,7 +138,7 @@ func handleServers(w http.ResponseWriter, r *http.Request) {
 	out := []server{}
 	for rows.Next() {
 		var s server
-		rows.Scan(&s.ID, &s.Name)
+		rows.Scan(&s.ID, &s.Name, &s.Icon)
 		out = append(out, s)
 	}
 	writeJSON(w, out)
@@ -175,6 +176,45 @@ func handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	notifyServersChanged()
 	writeJSON(w, s)
+}
+
+const maxServerIcon = 4 << 20
+
+// handleSetServerIcon takes an uploaded picture as the server's image.
+func handleSetServerIcon(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.Error(w, "no such server", http.StatusNotFound)
+		return
+	}
+	url, ok := uploadedFile(w, r, imageKind, "server", maxServerIcon, "pictures can be up to 4 MB")
+	if !ok {
+		return
+	}
+	setServerIcon(w, id, url)
+}
+
+func handleRemoveServerIcon(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.Error(w, "no such server", http.StatusNotFound)
+		return
+	}
+	setServerIcon(w, id, "")
+}
+
+func setServerIcon(w http.ResponseWriter, id int64, url string) {
+	res, err := db.Exec(`UPDATE servers SET icon = ? WHERE id = ?`, url, id)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "no such server", http.StatusNotFound)
+		return
+	}
+	notifyServersChanged()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleRenameServer(w http.ResponseWriter, r *http.Request) {

@@ -1,8 +1,9 @@
 <script lang="ts">
   import { initial } from "$lib/avatar.ts";
 
-  // Fills its container: the profile picture, or the name's initial when there's none (or it fails to load).
-  let { name, src = "" }: { name: string; src?: string } = $props();
+  // Fills its container: the picture, or letters when there's none (or it fails to load): the name's
+  // initial by default. Server tiles use it too.
+  let { name, src = "", letters }: { name: string; src?: string; letters?: string } = $props();
   let failed = $state(false);
   $effect(() => { src; failed = false; });
 </script>
@@ -10,7 +11,7 @@
 {#if src && !failed}
   <img {src} alt="" draggable="false" onerror={() => (failed = true)} />
 {:else}
-  {initial(name)}
+  {letters ?? initial(name)}
 {/if}
 
 <style>

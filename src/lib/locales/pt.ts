@@ -128,6 +128,8 @@ export const pt: Record<string, string> = {
     "Excluir apaga os canais e mensagens do servidor para todos e encerra as chamadas dele.",
   "Click again to delete “{name}”": "Clique de novo para excluir “{name}”",
   "Delete server": "Excluir servidor",
+  "Change image": "Trocar imagem",
+  "Remove image": "Remover imagem",
 
   // ── Members ──
   "Member list": "Lista de membros",

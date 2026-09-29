@@ -69,6 +69,8 @@ func main() {
 	mux.HandleFunc("POST /api/servers", requireAdmin(handleCreateServer))
 	mux.HandleFunc("PATCH /api/servers/{id}", requireAdmin(handleRenameServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", requireAdmin(handleDeleteServer))
+	mux.HandleFunc("PUT /api/servers/{id}/icon", requireAdmin(handleSetServerIcon))
+	mux.HandleFunc("DELETE /api/servers/{id}/icon", requireAdmin(handleRemoveServerIcon))
 	mux.HandleFunc("GET /api/servers/{id}/channels", requireUser(handleServerChannels))
 	mux.HandleFunc("POST /api/servers/{id}/channels", requireAdmin(handleCreateChannel))
 	mux.HandleFunc("GET /api/servers/{id}/members", requireUser(handleServerMembers))

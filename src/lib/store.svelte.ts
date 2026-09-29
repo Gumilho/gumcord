@@ -9,7 +9,7 @@ import { serverMessage, t } from "./i18n.svelte.ts";
 
 export type ChannelKind = "text" | "voice";
 // Servers group channels. Admins see every server; everyone else, the ones they've been added to.
-export interface Server { id: number; name: string; }
+export interface Server { id: number; name: string; icon: string; }
 export interface Channel { id: number; server_id: number; name: string; kind: ChannelKind; }
 type AttachmentType = "image" | "file";
 interface Message {
@@ -452,13 +452,13 @@ class GumcordStore {
     const form = new FormData();
     form.append("name", name);
     form.append("file", file);
-    return this.#libraryRequest(`/servers/${serverId}/${library}`, { method: "POST", body: form });
+    return this.#submit(`/servers/${serverId}/${library}`, "POST", form);
   }
 
   async removeItem(library: Library, item: ServerItem): Promise<string> {
     const serverId = this.#libraryServer(library);
     if (serverId === undefined) return t("No server open.");
-    return this.#libraryRequest(`/servers/${serverId}/${library}/${item.id}`, { method: "DELETE" });
+    return this.#submit(`/servers/${serverId}/${library}/${item.id}`, "DELETE");
   }
 
   canRemove(item: ServerItem) {
@@ -469,14 +469,6 @@ class GumcordStore {
     return library === "emotes" ? this.activeServer?.id : this.voiceChannel?.server_id;
   }
 
-  async #libraryRequest(path: string, init: RequestInit): Promise<string> {
-    try {
-      const res = await this.#api(path, init, UPLOAD_TIMEOUT_MS);
-      return res.ok ? "" : await errorText(res);
-    } catch {
-      return t("Can't reach the server.");
-    }
-  }
 
   // ── Soundboard ────────────────────────────────────────────
 
@@ -584,14 +576,16 @@ class GumcordStore {
 
   // ── Admin: servers and members ────────────────────────────
 
-  // Each returns an error message, or "" on success. The server's live update refreshes everyone.
-  async #adminRequest(path: string, method: string, body?: unknown): Promise<string> {
+  // A change the server answers with nothing but success or a reason: returns the error to show, or
+  // "". The server's live update refreshes everyone, this client included. Forms are uploads.
+  async #submit(path: string, method: string, body?: unknown): Promise<string> {
+    const form = body instanceof FormData;
     try {
       const res = await this.#api(path, {
         method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+        headers: body && !form ? { "Content-Type": "application/json" } : undefined,
+        body: form ? body : body ? JSON.stringify(body) : undefined,
+      }, form ? UPLOAD_TIMEOUT_MS : undefined);
       return res.ok ? "" : await errorText(res);
     } catch {
       return t("Can't reach the server.");
@@ -612,19 +606,29 @@ class GumcordStore {
   }
 
   renameServer(id: number, name: string) {
-    return this.#adminRequest(`/servers/${id}`, "PATCH", { name });
+    return this.#submit(`/servers/${id}`, "PATCH", { name });
   }
 
   deleteServer(id: number) {
-    return this.#adminRequest(`/servers/${id}`, "DELETE");
+    return this.#submit(`/servers/${id}`, "DELETE");
+  }
+
+  setServerIcon(id: number, file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    return this.#submit(`/servers/${id}/icon`, "PUT", form);
+  }
+
+  removeServerIcon(id: number) {
+    return this.#submit(`/servers/${id}/icon`, "DELETE");
   }
 
   addMember(serverId: number, userId: number) {
-    return this.#adminRequest(`/servers/${serverId}/members/${userId}`, "PUT");
+    return this.#submit(`/servers/${serverId}/members/${userId}`, "PUT");
   }
 
   removeMember(serverId: number, userId: number) {
-    return this.#adminRequest(`/servers/${serverId}/members/${userId}`, "DELETE");
+    return this.#submit(`/servers/${serverId}/members/${userId}`, "DELETE");
   }
 
   // Everyone who has signed in, for adding people to a server.

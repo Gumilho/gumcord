@@ -5,6 +5,7 @@
   import { hue, initials } from "$lib/avatar.ts";
   import Icon from "$lib/components/Icon.svelte";
   import Modal from "$lib/components/Modal.svelte";
+  import UserAvatar from "$lib/components/UserAvatar.svelte";
 
   // The server list down the far left. Admins get a button to create one.
   let creating = $state(false);
@@ -41,7 +42,7 @@
       use:tooltip={s.name}
       onclick={() => store.selectServer(s)}
     >
-      {initials(s.name)}
+      <UserAvatar name={s.name} src={s.icon} letters={initials(s.name)} />
     </button>
   {/each}
 
