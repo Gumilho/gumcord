@@ -9,7 +9,7 @@
   import ServerRail from '$lib/components/ServerRail.svelte';
   import { installShortcuts } from '$lib/shortcuts.svelte.ts';
   import { t } from '$lib/i18n.svelte.ts';
-  import { mobile, showMain, showNav, swipeEnd, swipeStart } from '$lib/mobile.svelte.ts';
+  import { dragEnd, dragMove, dragStart, mobile } from '$lib/mobile.svelte.ts';
 
   onMount(() => {
     void store.boot();
@@ -42,24 +42,27 @@
 {:else if store.signedOut}
   <Login />
 {:else if store.me}
-  <div class="app" class:show-nav={mobile.pane === "nav"}>
-    <!-- One pane on a phone, just the server list and sidebar side by side otherwise. The swipes
-         are shortcuts: the back button and the channel list do the same with a tap. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="nav-pane"
-      inert={mobile.narrow && mobile.pane === "main"}
-      ontouchstart={swipeStart}
-      ontouchend={(e) => { if (swipeEnd(e) < 0 && (store.activeChannel || store.room)) showMain(); }}
-    >
+  <!-- On a phone the chat or call slides over the channel list, following a sideways drag. The
+       drags are shortcuts: the back button and the channel list do the same with a tap. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div
+    class="app"
+    class:show-nav={mobile.pane === "nav"}
+    class:dragging={mobile.drag !== null}
+    ontouchstart={(e) => dragStart(e, !!(store.activeChannel || store.room))}
+    ontouchmove={dragMove}
+    ontouchend={dragEnd}
+    ontouchcancel={dragEnd}
+  >
+    <!-- Just the server list and sidebar side by side on a larger screen. -->
+    <div class="nav-pane" inert={mobile.narrow && mobile.pane === "main" && mobile.drag === null}>
       <ServerRail />
       <Sidebar />
     </div>
     <main
       class="main"
-      inert={mobile.narrow && mobile.pane === "nav"}
-      ontouchstart={swipeStart}
-      ontouchend={(e) => { if (swipeEnd(e) > 0) showNav(); }}
+      inert={mobile.narrow && mobile.pane === "nav" && mobile.drag === null}
+      style:transform={mobile.drag !== null ? `translateX(${mobile.drag}px)` : undefined}
     >
       {#if store.mainView === "call" && store.room}
         <CallPanel />
@@ -81,23 +84,28 @@
 
   .nav-pane { display: contents; }
 
-  /* Phones: the two panes stacked, sliding sideways. */
+  /* Phones: the channel list stays put underneath; the chat or call slides over it. */
   @media (max-width: 768px) {
     .app { position: relative; }
 
     .nav-pane, .main {
       position: absolute;
       inset: 0;
-      transition: transform 0.22s ease;
     }
 
-    .nav-pane {
-      display: flex;
-      transform: translateX(-100%);
+    .nav-pane { display: flex; }
+
+    .main {
+      z-index: 1;
+      background: #1a1b2e;
+      box-shadow: -6px 0 18px #0009;
+      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s;
     }
 
-    .app.show-nav .nav-pane { transform: none; }
     .app.show-nav .main { transform: translateX(100%); }
+    .app.show-nav:not(.dragging) .main { box-shadow: none; }
+    /* Under the finger: no easing, it's exactly where the finger is. */
+    .app.dragging .main { transition: none; }
   }
 
   .main {
