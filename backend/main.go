@@ -62,6 +62,9 @@ func main() {
 	mux.HandleFunc("POST /api/auth/desktop/approve", handleDesktopApprove)
 	mux.HandleFunc("POST /api/auth/desktop/poll", handleDesktopPoll)
 	mux.HandleFunc("GET /api/me", requireUser(handleMe))
+	mux.HandleFunc("PATCH /api/me", requireUser(handleUpdateProfile))
+	mux.HandleFunc("PUT /api/me/avatar", requireUser(handleSetAvatar))
+	mux.HandleFunc("DELETE /api/me/avatar", requireUser(handleResetAvatar))
 	mux.HandleFunc("GET /api/servers", requireUser(handleServers))
 	mux.HandleFunc("POST /api/servers", requireAdmin(handleCreateServer))
 	mux.HandleFunc("PATCH /api/servers/{id}", requireAdmin(handleRenameServer))
@@ -172,7 +175,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := db.Query(`
 		SELECT m.id, m.channel_id, u.name, m.content, m.created_at, m.attachment_url, m.attachment_type
-		FROM messages m JOIN users u ON m.user_id = u.id
+		FROM messages m JOIN profiles u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
 	`, channelID)
@@ -263,10 +266,14 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {
 			continue
 		}
-		// Checked per message: an admin may have removed this user from the server since they connected.
+		// Checked per message: an admin may have removed this user from the server since they
+		// connected, or they may have changed their name.
 		serverID, _, ok := channelAccess(u, in.ChannelID)
 		if !ok {
 			continue
+		}
+		if current, err := profile(u.ID); err == nil {
+			u = current
 		}
 
 		msg := wsMsg{

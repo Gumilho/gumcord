@@ -140,12 +140,12 @@ func sessionUser(r *http.Request) (user, bool) {
 	if !parseToken(cookie.Value, "session", &c) {
 		return user{}, false
 	}
-	u := user{}
-	u.ID, err = strconv.ParseInt(c.Subject, 10, 64)
-	if err != nil || db.QueryRow(`SELECT name, avatar, is_admin FROM users WHERE id = ?`, u.ID).Scan(&u.Name, &u.Avatar, &u.Admin) != nil {
+	id, err := strconv.ParseInt(c.Subject, 10, 64)
+	if err != nil {
 		return user{}, false
 	}
-	return u, true
+	u, err := profile(id)
+	return u, err == nil
 }
 
 func requireUser(next http.HandlerFunc) http.HandlerFunc {

@@ -74,6 +74,7 @@ func initDB(dataDir string) {
 var migrations = []func(*sql.Tx) error{
 	migrateServers,
 	migrateStreamAudio,
+	migrateProfiles,
 }
 
 func migrate() {
@@ -193,16 +194,42 @@ func migrateStreamAudio(tx *sql.Tx) error {
 	return err
 }
 
+// migrateProfiles lets people set their own name and picture. The identity provider's stay in
+// name/avatar (refreshed at each login); the profiles view is what everyone else sees.
+func migrateProfiles(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+		ALTER TABLE users ADD COLUMN custom_name TEXT NOT NULL DEFAULT '';
+		ALTER TABLE users ADD COLUMN custom_avatar TEXT NOT NULL DEFAULT '';
+		CREATE VIEW profiles AS SELECT
+			id,
+			COALESCE(NULLIF(custom_name, ''), name) AS name,
+			COALESCE(NULLIF(custom_avatar, ''), avatar) AS avatar,
+			is_admin
+		FROM users;
+	`)
+	return err
+}
+
+// profile is how user id appears to everyone: their own name and picture if they've set them.
+func profile(id int64) (user, error) {
+	u := user{ID: id}
+	err := db.QueryRow(`SELECT name, avatar, is_admin FROM profiles WHERE id = ?`, id).Scan(&u.Name, &u.Avatar, &u.Admin)
+	return u, err
+}
+
 // upsertUser records a login, refreshing the display name, picture and admin status from the
 // identity provider. An empty avatar (the import failed, or dev login) keeps the one already stored.
 func upsertUser(subject, name, avatar string, admin bool) (user, error) {
-	u := user{Name: name, Admin: admin}
+	var id int64
 	err := db.QueryRow(`
 		INSERT INTO users (subject, name, avatar, is_admin) VALUES (?, ?, ?, ?)
 		ON CONFLICT(subject) DO UPDATE SET
 			name = excluded.name,
 			avatar = CASE WHEN excluded.avatar != '' THEN excluded.avatar ELSE users.avatar END,
 			is_admin = excluded.is_admin
-		RETURNING id, avatar`, subject, name, avatar, admin).Scan(&u.ID, &u.Avatar)
-	return u, err
+		RETURNING id`, subject, name, avatar, admin).Scan(&id)
+	if err != nil {
+		return user{}, err
+	}
+	return profile(id)
 }

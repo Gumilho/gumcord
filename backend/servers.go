@@ -307,14 +307,14 @@ func handleServerMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	queryUsers(w, `
-		SELECT u.id, u.name, u.avatar, u.is_admin FROM users u
+		SELECT u.id, u.name, u.avatar, u.is_admin FROM profiles u
 		JOIN server_members m ON m.user_id = u.id
 		WHERE m.server_id = ? ORDER BY lower(u.name), u.id`, id)
 }
 
 // handleUsers lists everyone who has signed in, for admins adding people to servers.
 func handleUsers(w http.ResponseWriter, r *http.Request) {
-	queryUsers(w, `SELECT id, name, avatar, is_admin FROM users ORDER BY lower(name), id`)
+	queryUsers(w, `SELECT id, name, avatar, is_admin FROM profiles ORDER BY lower(name), id`)
 }
 
 func handleAddMember(w http.ResponseWriter, r *http.Request) {

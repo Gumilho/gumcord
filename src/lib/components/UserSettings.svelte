@@ -3,10 +3,38 @@
   import { store, type AudioDeviceKind } from "$lib/store.svelte.ts";
   import { canPickOutput } from "$lib/audio.ts";
   import Modal from "$lib/components/Modal.svelte";
+  import UserAvatar from "$lib/components/UserAvatar.svelte";
 
   // Your own settings, remembered on this device.
   let { onclose }: { onclose: () => void } = $props();
 
+  // ── Profile ──
+  // svelte-ignore state_referenced_locally
+  let name = $state(store.me?.name ?? "");
+  let profileError = $state("");
+  let busy = $state(false);
+  let photoInput: HTMLInputElement | null = $state(null);
+
+  async function run(action: Promise<string>) {
+    busy = true;
+    profileError = await action;
+    busy = false;
+    if (!profileError) name = store.me?.name ?? name;
+  }
+
+  function saveName(e: SubmitEvent) {
+    e.preventDefault();
+    if (name.trim()) void run(store.updateName(name.trim()));
+  }
+
+  function pickPhoto(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = "";
+    if (file) void run(store.setAvatar(file));
+  }
+
+  // ── Voice ──
   let devices: MediaDeviceInfo[] = $state([]);
   // Browsers only reveal device names (and usable IDs) once the site may use the microphone.
   const named = $derived(devices.some((d) => d.label));
@@ -51,6 +79,27 @@
 
 <Modal title="User settings" {onclose}>
   <section>
+    <h3>Profile</h3>
+    <div class="profile">
+      <div class="big-avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
+      <div class="photo-actions">
+        <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={photoInput} onchange={pickPhoto} />
+        <button class="primary" type="button" disabled={busy} onclick={() => photoInput?.click()}>Change photo</button>
+        <button class="link" type="button" disabled={busy} onclick={() => run(store.resetAvatar())}>Use my PocketID photo</button>
+      </div>
+    </div>
+    <form class="row" onsubmit={saveName}>
+      <label class="field">
+        <span>Display name</span>
+        <input bind:value={name} maxlength="32" />
+      </label>
+      <button class="primary" type="submit" disabled={busy || !name.trim() || name.trim() === store.me?.name}>Save</button>
+    </form>
+    <button class="link" type="button" disabled={busy} onclick={() => run(store.updateName(""))}>Use my PocketID name</button>
+    {#if profileError}<p class="error">{profileError}</p>{/if}
+  </section>
+
+  <section>
     <h3>Voice</h3>
     <label class="field">
       <span>Microphone</span>
@@ -88,6 +137,80 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+
+  section + section {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #2e3154;
+  }
+
+  .profile {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .big-avatar {
+    width: 72px;
+    height: 72px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #5b40c2;
+    color: #fff;
+    font-size: 28px;
+    font-weight: 700;
+  }
+
+  .photo-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .row .field { flex: 1; }
+
+  input:not([type="file"]) {
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid #33365a;
+    border-radius: 7px;
+    background: #1a1b2e;
+    color: #d4d8f0;
+    font: inherit;
+    font-size: 14px;
+    outline: none;
+  }
+
+  input:focus { border-color: #7c5cbf; }
+
+  .primary {
+    padding: 9px 16px;
+    border: none;
+    border-radius: 6px;
+    background: #5b40c2;
+    color: #fff;
+    font: 600 14px system-ui, sans-serif;
+    cursor: pointer;
+  }
+
+  .primary:hover:not(:disabled) { background: #6d50d6; }
+  .primary:disabled { opacity: 0.5; cursor: default; }
+
+  .error {
+    margin: 0;
+    color: #f87171;
+    font-size: 13px;
   }
 
   h3 {
@@ -130,13 +253,17 @@
   }
 
   .link {
+    align-self: flex-start;
     padding: 0;
     border: none;
     background: none;
     color: #a78bfa;
     font: inherit;
+    font-size: 13px;
     cursor: pointer;
   }
+
+  .link:disabled { opacity: 0.5; cursor: default; }
 
   .link:hover { text-decoration: underline; }
 </style>

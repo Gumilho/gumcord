@@ -83,6 +83,24 @@ func (h *wsHub) remove(conn *websocket.Conn) {
 	})
 }
 
+// updateUser takes a changed name or picture into the online list and its connections.
+func (h *wsHub) updateUser(u user) {
+	h.mu.Lock()
+	for c, cu := range h.conns {
+		if cu.ID == u.ID {
+			h.conns[c] = u
+		}
+	}
+	o := h.online[u.ID]
+	if o != nil {
+		o.user = u
+	}
+	h.mu.Unlock()
+	if o != nil {
+		h.broadcastRaw(h.onlineMsg())
+	}
+}
+
 // onlineMsg lists everyone online, sorted by name.
 func (h *wsHub) onlineMsg() []byte {
 	h.mu.Lock()

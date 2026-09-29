@@ -92,7 +92,7 @@ const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
 
 const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
   a.length === b.length
-  && a.every((s, i) => s.identity === b[i].identity && s.track === b[i].track && s.loading === b[i].loading);
+  && a.every((s, i) => s.identity === b[i].identity && s.name === b[i].name && s.track === b[i].track && s.loading === b[i].loading);
 
 function loadDevicePrefs(): DevicePrefs {
   try {
@@ -391,6 +391,36 @@ class GumcordStore {
       return JSON.parse(localStorage.getItem(CHANNEL_KEY) ?? "{}") ?? {};
     } catch {
       return {};
+    }
+  }
+
+  // ── Your profile ──────────────────────────────────────────
+
+  // Each returns an error message, or "" on success. An empty name goes back to your PocketID name.
+  updateName(name: string) {
+    return this.#profileRequest("/me", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  }
+
+  setAvatar(file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    return this.#profileRequest("/me/avatar", { method: "PUT", body: form }, UPLOAD_TIMEOUT_MS);
+  }
+
+  resetAvatar() {
+    return this.#profileRequest("/me/avatar", { method: "DELETE" });
+  }
+
+  async #profileRequest(path: string, init: RequestInit, ms?: number): Promise<string> {
+    try {
+      const res = await this.#api(path, init, ms);
+      if (!res.ok) return (await res.text()).trim() || `Failed (${res.status}).`;
+      // The server also updates any call you're in, name and picture in one request. (Doing it from
+      // here would race: each LiveKit update carries the others' current values.)
+      this.me = await res.json();
+      return "";
+    } catch {
+      return "Can't reach the server.";
     }
   }
 
@@ -705,12 +735,13 @@ class GumcordStore {
       this.#updateParticipants(r);
     });
 
-    // Keep everyone's mute/deafen indicators current.
+    // Keep everyone's names, pictures and mute/deafen indicators current.
     for (const ev of [
       RoomEvent.TrackMuted,
       RoomEvent.TrackUnmuted,
       RoomEvent.TrackUnpublished,
       RoomEvent.ParticipantAttributesChanged,
+      RoomEvent.ParticipantNameChanged,
     ] as const) {
       r.on(ev, () => this.#updateParticipants(r));
     }
