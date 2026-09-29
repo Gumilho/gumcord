@@ -1049,10 +1049,13 @@ class GumcordStore {
     this.#saveVoiceSession();
   }
 
+  // The server marks you deafened in the call: participants can't set their own attributes (or
+  // they could also rename themselves to pose as someone else).
   #publishDeafened() {
-    this.room?.localParticipant
-      .setAttributes({ [DEAFENED_ATTR]: this.voiceDeafened ? "1" : "" })
-      .catch((err) => console.warn("Couldn't publish deafen state:", err));
+    if (!this.room) return;
+    void this.#submit("/voice/deafened", "PUT", { deafened: this.voiceDeafened }).then((err) => {
+      if (err) console.warn("Couldn't publish deafen state:", err);
+    });
   }
 
   #syncAudioPlayback(r: Room) {

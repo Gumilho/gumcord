@@ -59,6 +59,10 @@ func saveUpload(kind fileKind, prefix string, data []byte) (string, error) {
 // uploadedFile saves the file in a form's "file" field, answering the request itself when there's
 // no usable file.
 func uploadedFile(w http.ResponseWriter, r *http.Request, kind fileKind, prefix string, limit int64, tooLarge string) (string, bool) {
+	if !uploadLimit.allow(currentUser(r).ID) {
+		tooMany(w)
+		return "", false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	if err := r.ParseMultipartForm(avatarFormMemory); err != nil {
 		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)

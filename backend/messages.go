@@ -1,9 +1,10 @@
 package main
 
 import (
-	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 )
 
 // Changing sent messages: people edit and delete their own; admins can delete anyone's.
@@ -36,7 +37,13 @@ func handleEditMessage(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Content string `json:"content"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if utf8.RuneCountInString(body.Content) > maxMessageLen {
+		http.Error(w, fmt.Sprintf("messages can be up to %d characters", maxMessageLen), http.StatusBadRequest)
+		return
+	}
 	var attachment string
 	db.QueryRow(`SELECT attachment_url FROM messages WHERE id = ?`, id).Scan(&attachment)
 	if strings.TrimSpace(body.Content) == "" && attachment == "" {

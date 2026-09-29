@@ -19,7 +19,11 @@ export function getEmbed(url: string): Promise<Embed | null> {
   let p = cache.get(url);
   if (!p) {
     p = fetch(`/api/embed?url=${encodeURIComponent(url)}`)
-      .then((r) => (r.status === 200 ? (r.json() as Promise<Embed>) : null))
+      .then((r) => {
+        if (r.status === 200) return r.json() as Promise<Embed>;
+        if (r.status !== 204) cache.delete(url); // busy (too many at once): try again next time it's shown
+        return null;
+      })
       .catch(() => {
         cache.delete(url); // offline for a moment: try again next time it's shown
         return null;

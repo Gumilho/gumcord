@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -89,6 +90,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/channels/{id}", requireAdmin(handleDeleteChannel))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
 	mux.HandleFunc("POST /api/voice/token", requireUser(handleVoiceToken))
+	mux.HandleFunc("PUT /api/voice/deafened", requireUser(handleSetDeafened))
 	mux.HandleFunc("GET /api/user-audio", requireUser(handleUserAudio))
 	mux.HandleFunc("PUT /api/user-audio/{id}", requireUser(handleSetUserAudio))
 	mux.HandleFunc("POST /api/upload", requireUser(handleUpload))
@@ -115,7 +117,12 @@ func main() {
 	go runPresence(ctx)
 
 	addr := envOr("ADDR", ":8080")
-	srv := &http.Server{Addr: addr, Handler: csrf.Handler(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           secureHeaders(limitBodies(csrf.Handler(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 	go func() {
 		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 			log.Fatal(err)
@@ -131,6 +138,16 @@ func main() {
 }
 
 // --- helpers ---
+
+// readJSON decodes a request's JSON body, answering 400 itself when it isn't valid (so a garbled
+// request is refused rather than read as empty fields: an empty name, say, resets it).
+func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return false
+	}
+	return true
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -231,7 +248,10 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.CloseNow()
 
-	hub.add(conn, u)
+	if !hub.add(conn, u) {
+		conn.Close(websocket.StatusPolicyViolation, "too many connections")
+		return
+	}
 	defer hub.remove(conn)
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -284,10 +304,13 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {
 			continue
 		}
+		if utf8.RuneCountInString(in.Content) > maxMessageLen || !messageLimit.allow(u.ID) {
+			continue
+		}
 		// Checked per message: an admin may have removed this user from the server since they
 		// connected, or they may have changed their name.
-		serverID, _, ok := channelAccess(u, in.ChannelID)
-		if !ok {
+		serverID, kind, ok := channelAccess(u, in.ChannelID)
+		if !ok || kind != "text" {
 			continue
 		}
 		if current, err := profile(u.ID); err == nil {
@@ -321,7 +344,9 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ChannelID int64 `json:"channel_id"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return
+	}
 	if _, kind, ok := channelAccess(u, body.ChannelID); !ok || kind != "voice" {
 		http.Error(w, "no such voice channel", http.StatusNotFound)
 		return
@@ -333,12 +358,17 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	signed, err := signLiveKit(lkClaims{
-		Video: &videoGrant{Room: fmt.Sprintf("channel-%d", body.ChannelID), RoomJoin: true, CanUpdateOwnMetadata: true},
+		// Names, pictures and the deafened mark are set by the server (see voice.go), so nobody can
+		// pose as someone else in a call. LiveKit refreshes the token while connected.
+		Video: &videoGrant{
+			Room: fmt.Sprintf("channel-%d", body.ChannelID), RoomJoin: true,
+			CanPublishSources: []string{"microphone", "screen_share", "screen_share_audio"},
+		},
 		// Identity is the stable user ID; the display name can change between logins.
 		Name:             u.Name,
 		Attributes:       attrs,
 		RegisteredClaims: jwt.RegisteredClaims{Subject: strconv.FormatInt(u.ID, 10)},
-	}, 24*time.Hour)
+	}, voiceTokenTTL)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -371,6 +401,9 @@ var videoExts = map[string]string{
 	"video/mp4":  ".mp4",
 	"video/webm": ".webm",
 }
+
+// Longest message, in characters (Discord's, with Nitro).
+const maxMessageLen = 4000
 
 var imageExts = map[string]string{
 	"image/png":  ".png",
@@ -424,6 +457,10 @@ func serveUploads() http.Handler {
 const uploadMemory = 1 << 20
 
 func handleUpload(w http.ResponseWriter, r *http.Request) {
+	if !uploadLimit.allow(currentUser(r).ID) {
+		tooMany(w)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(uploadMemory); err != nil {
 		http.Error(w, "file missing or too large", http.StatusRequestEntityTooLarge)

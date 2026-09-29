@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,7 +22,9 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return
+	}
 	name := strings.TrimSpace(body.Name)
 	if len(name) > maxProfileName {
 		http.Error(w, fmt.Sprintf("names can be up to %d characters", maxProfileName), http.StatusBadRequest)
@@ -75,33 +76,38 @@ func profileChanged(w http.ResponseWriter, id int64) {
 	writeJSON(w, u)
 }
 
-// updateVoiceProfile renames the person, and swaps their picture, in the calls they're in right
-// now (asked of LiveKit directly: the presence snapshot can be a poll behind). Their own client does
-// this for its call too; this covers their other devices.
+// updateVoiceProfile renames the person, and swaps their picture, in the calls they're in.
 func updateVoiceProfile(u user) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	updateInCalls(ctx, u.ID, map[string]any{
+		"name": u.Name, "attributes": map[string]string{"avatar": u.Avatar}, // "" removes it
+	})
+}
+
+// updateInCalls changes how someone appears in the calls they're in right now (asked of LiveKit
+// directly: the presence snapshot can be a poll behind). Only the server does this; participants
+// can't change their own name or attributes.
+func updateInCalls(ctx context.Context, userID int64, update map[string]any) {
 	channels, err := fetchPresence(ctx)
 	if err != nil {
-		log.Printf("update %d in calls: %v", u.ID, err)
+		log.Printf("update %d in calls: %v", userID, err)
 		return
 	}
-	identity := fmt.Sprint(u.ID)
-	var rooms []string
+	identity := fmt.Sprint(userID)
 	for channelID, members := range channels {
 		for _, m := range members {
-			if m.Identity == identity {
-				rooms = append(rooms, fmt.Sprintf("channel-%d", channelID))
+			if m.Identity != identity {
+				continue
 			}
-		}
-	}
-	for _, room := range rooms {
-		err := roomService(ctx, "UpdateParticipant", videoGrant{RoomAdmin: true, Room: room}, map[string]any{
-			"room": room, "identity": identity, "name": u.Name,
-			"attributes": map[string]string{"avatar": u.Avatar}, // "" removes it
-		}, &struct{}{})
-		if err != nil {
-			log.Printf("update %s in %s: %v", identity, room, err)
+			room := fmt.Sprintf("channel-%d", channelID)
+			req := map[string]any{"room": room, "identity": identity}
+			for k, v := range update {
+				req[k] = v
+			}
+			if err := roomService(ctx, "UpdateParticipant", videoGrant{RoomAdmin: true, Room: room}, req, &struct{}{}); err != nil {
+				log.Printf("update %s in %s: %v", identity, room, err)
+			}
 		}
 	}
 }

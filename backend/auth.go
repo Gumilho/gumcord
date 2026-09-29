@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"html/template"
 	"log"
@@ -153,6 +152,10 @@ func requireUser(next http.HandlerFunc) http.HandlerFunc {
 		u, ok := sessionUser(r)
 		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !changeLimit.allow(u.ID) {
+			tooMany(w)
 			return
 		}
 		next(w, r.WithContext(context.WithValue(r.Context(), userCtxKey{}, u)))
@@ -405,7 +408,14 @@ type desktopGrant struct {
 	jwt.RegisteredClaims
 }
 
+// At most this many desktop sign-ins waiting at once: the endpoint needs no account.
+const maxDesktopLogins = 500
+
 func handleDesktopStart(w http.ResponseWriter, r *http.Request) {
+	if !desktopStartLimit.allow("desktop") {
+		tooMany(w)
+		return
+	}
 	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // no 0/O or 1/I lookalikes
 	b := make([]byte, 8)
 	rand.Read(b)
@@ -421,8 +431,15 @@ func handleDesktopStart(w http.ResponseWriter, r *http.Request) {
 			delete(desktopLogins.m, h)
 		}
 	}
-	desktopLogins.m[handle] = l
+	full := len(desktopLogins.m) >= maxDesktopLogins
+	if !full {
+		desktopLogins.m[handle] = l
+	}
 	desktopLogins.mu.Unlock()
+	if full {
+		tooMany(w)
+		return
+	}
 
 	writeJSON(w, map[string]string{
 		"handle": handle,
@@ -462,7 +479,9 @@ func handleDesktopPoll(w http.ResponseWriter, r *http.Request) {
 		Handle string `json:"handle"`
 		Secret string `json:"secret"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return
+	}
 
 	desktopLogins.mu.Lock()
 	l := desktopLogins.get(body.Handle)

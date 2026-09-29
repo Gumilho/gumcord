@@ -25,8 +25,8 @@ type videoGrant struct {
 	RoomList   bool   `json:"roomList,omitempty"`
 	RoomAdmin  bool   `json:"roomAdmin,omitempty"`
 	RoomCreate bool   `json:"roomCreate,omitempty"` // also allows deleting rooms
-	// Lets clients publish their own deafen state as a participant attribute.
-	CanUpdateOwnMetadata bool `json:"canUpdateOwnMetadata,omitempty"`
+	// What a participant may send; none of this lets them change their own name or attributes.
+	CanPublishSources []string `json:"canPublishSources,omitempty"`
 }
 
 type lkClaims struct {

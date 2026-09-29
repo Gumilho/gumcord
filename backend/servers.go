@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -112,7 +111,9 @@ func readName(w http.ResponseWriter, r *http.Request) (string, bool) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return "", false
+	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" || len(name) > maxNameLen {
 		http.Error(w, fmt.Sprintf("name must be 1-%d characters", maxNameLen), http.StatusBadRequest)
@@ -304,7 +305,9 @@ func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		Kind string `json:"kind"`
 	}
-	json.NewDecoder(r.Body).Decode(&body)
+	if !readJSON(w, r, &body) {
+		return
+	}
 	c := channel{ServerID: id, Name: strings.TrimSpace(body.Name), Kind: body.Kind}
 	if c.Name == "" || len(c.Name) > maxNameLen || (c.Kind != "text" && c.Kind != "voice") {
 		http.Error(w, "bad channel", http.StatusBadRequest)

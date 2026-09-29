@@ -36,8 +36,16 @@ type onlineUser struct {
 
 var hub = &wsHub{conns: map[*websocket.Conn]user{}, online: map[int64]*onlineUser{}}
 
-func (h *wsHub) add(conn *websocket.Conn, u user) {
+// Enough for every device someone owns, with tabs to spare.
+const maxConnsPerUser = 20
+
+// add registers a connection, unless the user already has too many.
+func (h *wsHub) add(conn *websocket.Conn, u user) bool {
 	h.mu.Lock()
+	if o := h.online[u.ID]; o != nil && o.conns >= maxConnsPerUser {
+		h.mu.Unlock()
+		return false
+	}
 	h.conns[conn] = u
 	o := h.online[u.ID]
 	changed := o == nil || o.user != u // a new user, or a new name or picture since their last login
@@ -56,6 +64,7 @@ func (h *wsHub) add(conn *websocket.Conn, u user) {
 	if changed {
 		h.broadcastRaw(h.onlineMsg())
 	}
+	return true
 }
 
 func (h *wsHub) remove(conn *websocket.Conn) {

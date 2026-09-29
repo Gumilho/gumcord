@@ -327,7 +327,10 @@ var embedCache = struct {
 	m map[string]*embedEntry
 }{m: map[string]*embedEntry{}}
 
-func lookupEmbed(ctx context.Context, target string) *embed {
+// lookupEmbed answers with the preview (nil when the page has none), or limited when this user has
+// asked for too many new pages lately.
+func lookupEmbed(r *http.Request, target string) (e *embed, limited bool) {
+	ctx := r.Context()
 	embedCache.Lock()
 	ent := embedCache.m[target]
 	if ent != nil {
@@ -340,6 +343,11 @@ func lookupEmbed(ctx context.Context, target string) *embed {
 		}
 	}
 	if ent == nil {
+		// Only fetches count, not previews already known.
+		if !previewLimit.allow(currentUser(r).ID) {
+			embedCache.Unlock()
+			return nil, true
+		}
 		ent = &embedEntry{done: make(chan struct{})}
 		pruneEmbedCache()
 		embedCache.m[target] = ent
@@ -360,7 +368,7 @@ func lookupEmbed(ctx context.Context, target string) *embed {
 		ent.embed, ent.expires = e, time.Now().Add(ttl)
 		embedCache.Unlock()
 		close(ent.done)
-		return e
+		return e, false
 	}
 	embedCache.Unlock()
 
@@ -368,9 +376,9 @@ func lookupEmbed(ctx context.Context, target string) *embed {
 	case <-ent.done:
 		embedCache.Lock()
 		defer embedCache.Unlock()
-		return ent.embed
+		return ent.embed, false
 	case <-ctx.Done():
-		return nil
+		return nil, false
 	}
 }
 
@@ -407,7 +415,11 @@ func handleEmbed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not a web link", http.StatusBadRequest)
 		return
 	}
-	e := lookupEmbed(r.Context(), u.String())
+	e, limited := lookupEmbed(r, u.String())
+	if limited {
+		tooMany(w)
+		return
+	}
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	if e == nil {
 		w.WriteHeader(http.StatusNoContent)
