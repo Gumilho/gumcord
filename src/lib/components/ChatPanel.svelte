@@ -260,6 +260,9 @@
                   onload={onImageLoad}
                 />
               </button>
+            {:else if msg.attachment_url && msg.attachment_type === "sticker"}
+              {@const name = store.stickers.find((s) => s.url === msg.attachment_url)?.name ?? t("Sticker")}
+              <img class="msg-sticker" src={msg.attachment_url} alt={name} title={name} loading="lazy" onload={onImageLoad} />
             {:else if msg.attachment_url && msg.attachment_type === "video"}
               <!-- svelte-ignore a11y_media_has_caption -->
               <video class="msg-video" src={msg.attachment_url} controls preload="metadata" onloadedmetadata={onImageLoad}></video>
@@ -346,9 +349,9 @@
             <button
               class="attach-btn emote-btn"
               type="button"
-              aria-label={t("Emotes")}
+              aria-label={t("Emotes and stickers")}
               aria-expanded={pickerOpen}
-              use:tooltip={t("Emotes")}
+              use:tooltip={t("Emotes and stickers")}
               onclick={() => (pickerOpen = !pickerOpen)}
             >
               <Icon name="smile" />
@@ -813,6 +816,14 @@
   .lightbox-link:hover {
     opacity: 1;
     text-decoration: underline;
+  }
+
+  .msg-sticker {
+    display: block;
+    width: 160px;
+    height: 160px;
+    margin-top: 4px;
+    object-fit: contain;
   }
 
   .msg-video {

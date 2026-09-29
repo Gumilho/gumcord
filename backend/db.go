@@ -79,6 +79,7 @@ var migrations = []func(*sql.Tx) error{
 	migrateSounds,
 	migrateServerIcons,
 	migrateMessageEdits,
+	migrateStickers,
 }
 
 func migrate() {

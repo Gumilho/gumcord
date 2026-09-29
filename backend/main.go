@@ -76,7 +76,7 @@ func main() {
 	mux.HandleFunc("GET /api/servers/{id}/members", requireUser(handleServerMembers))
 	mux.HandleFunc("PUT /api/servers/{id}/members/{user}", requireAdmin(handleAddMember))
 	mux.HandleFunc("DELETE /api/servers/{id}/members/{user}", requireAdmin(handleRemoveMember))
-	for _, l := range []library{emotes, sounds} {
+	for _, l := range []library{emotes, stickers, sounds} {
 		mux.HandleFunc("GET /api/servers/{id}/"+l.table, requireUser(l.handleList))
 		mux.HandleFunc("POST /api/servers/{id}/"+l.table, requireUser(l.handleAdd))
 		mux.HandleFunc("DELETE /api/servers/{id}/"+l.table+"/{item}", requireUser(l.handleDelete))
@@ -275,7 +275,10 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(in.AttachmentURL, "/files/") || strings.Contains(in.AttachmentURL, "..") {
 			in.AttachmentURL, in.AttachmentType = "", ""
 		}
-		if in.AttachmentType != "image" && in.AttachmentType != "video" && in.AttachmentURL != "" {
+		if in.AttachmentType == "sticker" && !strings.HasPrefix(in.AttachmentURL, "/files/sticker-") {
+			in.AttachmentType = "image"
+		}
+		if in.AttachmentType != "image" && in.AttachmentType != "video" && in.AttachmentType != "sticker" && in.AttachmentURL != "" {
 			in.AttachmentType = "file"
 		}
 		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {

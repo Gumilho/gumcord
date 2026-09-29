@@ -11,19 +11,20 @@ export type ChannelKind = "text" | "voice";
 // Servers group channels. Admins see every server; everyone else, the ones they've been added to.
 export interface Server { id: number; name: string; icon: string; }
 export interface Channel { id: number; server_id: number; name: string; kind: ChannelKind; }
-type AttachmentType = "image" | "video" | "file";
+type AttachmentType = "image" | "video" | "sticker" | "file";
 export interface Message {
   id: number; channel_id: number; author_id: number; author: string; content: string; created_at: string;
   edited_at?: string; attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; admin: boolean; }
-// Something a server's members uploaded: an emote (a picture written :name: in messages) or a
-// soundboard sound. Whoever added it, or an admin, can remove it.
+// Something a server's members uploaded: an emote (a picture written :name: in messages), a sticker
+// (a bigger picture sent on its own) or a soundboard sound. Whoever added it, or an admin, can remove it.
 export interface ServerItem { id: number; name: string; url: string; created_by: number; }
 export type Emote = ServerItem;
+export type Sticker = ServerItem;
 export type Sound = ServerItem;
-export type Library = "emotes" | "sounds";
+export type Library = "emotes" | "stickers" | "sounds";
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // Someone in a voice channel as the server reports it, for channels you aren't in yourself.
@@ -169,6 +170,7 @@ class GumcordStore {
   activeServer:  Server | null  = $state(null);
   members:       User[]         = $state.raw([]);
   emotes:        Emote[]        = $state.raw([]);
+  stickers:      Sticker[]      = $state.raw([]);
   // By lowercase name: :Kappa: and :kappa: are one emote.
   emoteMap = $derived(new Map(this.emotes.map((e) => [e.name.toLowerCase(), e])));
   // The soundboard of the server your call is in (which may not be the one on screen).
@@ -404,15 +406,17 @@ class GumcordStore {
 
   // Loads a server's channels and members, staying on the open text channel if it's still there.
   async #loadServer(server: Server) {
-    const [channels, members, emotes] = await Promise.all([
+    const [channels, members, emotes, stickers] = await Promise.all([
       this.#api(`/servers/${server.id}/channels`),
       this.#api(`/servers/${server.id}/members`),
       this.#api(`/servers/${server.id}/emotes`),
+      this.#api(`/servers/${server.id}/stickers`),
     ]);
     if (this.activeServer?.id !== server.id) return; // switched to another server meanwhile
     this.channels = channels.ok ? await channels.json() : [];
     this.members  = members.ok ? await members.json() : [];
     this.emotes   = emotes.ok ? await emotes.json() : [];
+    this.stickers = stickers.ok ? await stickers.json() : [];
 
     const current = this.channels.find((c) => c.id === this.activeChannel?.id);
     if (current) {
@@ -430,11 +434,12 @@ class GumcordStore {
     }
   }
 
-  async #loadEmotes() {
+  // The open server's emotes or stickers, after someone changed them.
+  async #loadServerItems(library: "emotes" | "stickers") {
     const server = this.activeServer;
     if (!server) return;
-    const res = await this.#api(`/servers/${server.id}/emotes`);
-    if (res.ok && this.activeServer?.id === server.id) this.emotes = await res.json();
+    const res = await this.#api(`/servers/${server.id}/${library}`);
+    if (res.ok && this.activeServer?.id === server.id) this[library] = await res.json();
   }
 
   async #loadSounds() {
@@ -466,7 +471,7 @@ class GumcordStore {
   }
 
   #libraryServer(library: Library) {
-    return library === "emotes" ? this.activeServer?.id : this.voiceChannel?.server_id;
+    return library === "sounds" ? this.voiceChannel?.server_id : this.activeServer?.id;
   }
 
 
@@ -529,6 +534,7 @@ class GumcordStore {
       this.channels      = [];
       this.members       = [];
       this.emotes        = [];
+      this.stickers      = [];
       this.activeChannel = null;
       this.messages      = [];
     }
@@ -721,15 +727,25 @@ class GumcordStore {
     const content = this.draft.trim();
     const att     = this.pendingAttachment;
     if (!content && !att) return;
-    if (!this.activeChannel || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return;
+    if (!this.#send(content, att?.url ?? "", att?.type ?? "")) return;
+    this.draft             = "";
+    this.pendingAttachment = null;
+  }
+
+  // A sticker goes out on its own, leaving whatever you were typing.
+  sendSticker(sticker: Sticker) {
+    this.#send("", sticker.url, "sticker");
+  }
+
+  #send(content: string, attachmentUrl: string, attachmentType: string) {
+    if (!this.activeChannel || !this.#ws || this.#ws.readyState !== WebSocket.OPEN) return false;
     this.#ws.send(JSON.stringify({
       channel_id:      this.activeChannel.id,
       content,
-      attachment_url:  att?.url  ?? "",
-      attachment_type: att?.type ?? "",
+      attachment_url:  attachmentUrl,
+      attachment_type: attachmentType,
     }));
-    this.draft             = "";
-    this.pendingAttachment = null;
+    return true;
   }
 
   // ── WebSocket ─────────────────────────────────────────────
@@ -760,7 +776,7 @@ class GumcordStore {
         else if (data.type === "message_edited") {
           this.messages = this.messages.map((m) => (m.id === data.id ? { ...m, content: data.content, edited_at: data.edited_at } : m));
         } else if (data.type === "message_deleted") this.messages = this.messages.filter((m) => m.id !== data.id);
-        else if (data.type === "emotes" && data.server_id === this.activeServer?.id) void this.#loadEmotes();
+        else if ((data.type === "emotes" || data.type === "stickers") && data.server_id === this.activeServer?.id) void this.#loadServerItems(data.type);
         else if (data.type === "sounds" && data.server_id === this.voiceChannel?.server_id) void this.#loadSounds();
         return;
       }
