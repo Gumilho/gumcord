@@ -18,6 +18,8 @@ Add an OIDC client (PocketID → OIDC Clients → Add):
 
 Copy the client ID and secret for step 2. Gumcord shows each person's PocketID **display name**.
 
+Also create a group named **`gumcord-admins`** (or whatever `ADMIN_GROUP` says) and put yourself in it. Its members are Gumcord admins: they create servers and channels and add people to servers. Everyone else only sees the servers an admin has added them to. Admin status is read at sign-in, so sign out and back in after changing the group.
+
 ## 2. Server
 
 ```sh

@@ -7,14 +7,16 @@ import { SpeakingDetector } from "./speaking.ts";
 import { playSound, preloadSounds } from "./sounds.ts";
 
 export type ChannelKind = "text" | "voice";
-export interface Channel { id: number; name: string; kind: ChannelKind; }
+// Servers group channels. Admins see every server; everyone else, the ones they've been added to.
+export interface Server { id: number; name: string; }
+export interface Channel { id: number; server_id: number; name: string; kind: ChannelKind; }
 type AttachmentType = "image" | "file";
 interface Message {
   id: number; channel_id: number; author: string; content: string; created_at: string;
   attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
-export interface User { id: number; name: string; avatar: string; }
+export interface User { id: number; name: string; avatar: string; admin: boolean; }
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // Someone in a voice channel as the server reports it, for channels you aren't in yourself.
@@ -46,10 +48,12 @@ const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
 
 // Per-device session state, so a page refresh lands back where the user was.
-const CHANNEL_KEY = "gc_channel";
+const SERVER_KEY  = "gc_server";
+const CHANNEL_KEY = "gc_channels"; // { [serverId]: channelId }, the last text channel read in each server
 const VOICE_KEY   = "gc_voice";
 interface VoicePrefs   { muted: boolean; deafened: boolean; }
-interface VoiceSession extends VoicePrefs { channelId: number; }
+// The whole channel, not just its ID: the call may be in a server other than the one on screen.
+interface VoiceSession extends VoicePrefs { channel: Channel; }
 
 const REQUEST_TIMEOUT_MS = 10_000;
 // livekit-client retries some failures forever (e.g. /rtc answering 404), so a join gets a deadline.
@@ -91,6 +95,11 @@ class GumcordStore {
   // boot
   bootError = $state("");
   booted    = $state(false);
+
+  // servers, and the open server's channels and members
+  servers:       Server[]       = $state([]);
+  activeServer:  Server | null  = $state(null);
+  members:       User[]         = $state.raw([]);
 
   // channels + messages
   channels:      Channel[]      = $state([]);
@@ -192,6 +201,7 @@ class GumcordStore {
 
   async logout() {
     await fetchWithTimeout("/api/auth/logout", { method: "POST" }).catch(() => {});
+    localStorage.removeItem(SERVER_KEY);
     localStorage.removeItem(CHANNEL_KEY);
     localStorage.removeItem(VOICE_KEY);
     localStorage.setItem(SIGNED_OUT_KEY, "1");
@@ -208,6 +218,9 @@ class GumcordStore {
     await this.room?.disconnect();
     this.#ws?.close();
     this.#ws           = null;
+    this.servers       = [];
+    this.activeServer  = null;
+    this.members       = [];
     this.channels      = [];
     this.messages      = [];
     this.userAudio     = new Map();
@@ -233,46 +246,44 @@ class GumcordStore {
   }
 
   async #boot() {
-    let me: Response, channels: Response;
+    let me: Response, servers: Response;
     try {
-      [me, channels] = await Promise.all([this.#api("/me"), this.#api("/channels")]);
+      [me, servers] = await Promise.all([this.#api("/me"), this.#api("/servers")]);
     } catch {
       this.bootError = "Cannot reach server. Is the backend running?";
       return;
     }
     if (me.status === 401) { this.#needSignIn(); return; }
-    if (!me.ok || !channels.ok) { this.bootError = `Server error (${me.ok ? channels.status : me.status}).`; return; }
+    if (!me.ok || !servers.ok) { this.bootError = `Server error (${me.ok ? servers.status : me.status}).`; return; }
 
     this.me        = await me.json();
     this.signedOut = false;
     localStorage.removeItem(SIGNED_OUT_KEY);
-    this.channels  = await channels.json();
-    const savedId = Number(localStorage.getItem(CHANNEL_KEY));
-    const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
-              ?? this.channels.find((c) => c.kind === "text");
-    // Everything below only needs the channel list, so it runs while the messages load.
-    const messages = text ? this.selectChannel(text) : undefined;
+    this.servers   = await servers.json();
+    const savedId  = Number(localStorage.getItem(SERVER_KEY));
+    const server   = this.servers.find((s) => s.id === savedId) ?? this.servers[0];
+    // Everything below only needs to know who you are, so it runs while the server loads.
+    const loading = server ? this.selectServer(server) : undefined;
     void preloadSounds();
     this.#userAudioLoaded = this.#loadUserAudio();
     this.#openWS();
     this.#restoreVoice();
-    await messages;
+    await loading;
     this.booted = true;
   }
 
+  // Not awaited: the app shouldn't wait on LiveKit before it's usable. The server checks the user
+  // may still use the channel; if not, the saved session is dropped.
   #restoreVoice() {
     const saved = this.#loadVoiceSession();
-    if (!saved) return;
-    const ch = this.channels.find((c) => c.id === saved.channelId && c.kind === "voice");
-    if (!ch) { localStorage.removeItem(VOICE_KEY); return; }
-    // Not awaited: the app shouldn't wait on LiveKit before it's usable.
-    void this.joinVoice(ch, saved);
+    if (saved) void this.joinVoice(saved.channel, saved);
+    else localStorage.removeItem(VOICE_KEY);
   }
 
   #loadVoiceSession(): VoiceSession | null {
     try {
       const s = JSON.parse(localStorage.getItem(VOICE_KEY) ?? "null");
-      return s && typeof s.channelId === "number" ? s : null;
+      return s && typeof s.channel?.id === "number" && s.channel.kind === "voice" ? s : null;
     } catch {
       return null;
     }
@@ -284,7 +295,7 @@ class GumcordStore {
 
   #saveVoiceSession() {
     if (!this.voiceChannel) return;
-    const session: VoiceSession = { channelId: this.voiceChannel.id, ...this.#voicePrefs() };
+    const session: VoiceSession = { channel: this.voiceChannel, ...this.#voicePrefs() };
     localStorage.setItem(VOICE_KEY, JSON.stringify(session));
   }
 
@@ -292,6 +303,128 @@ class GumcordStore {
     clearTimeout(this.#wsRetryTimer ?? undefined);
     this.#ws?.close();
     this.room?.disconnect();
+  }
+
+  // ── Servers ───────────────────────────────────────────────
+
+  // The server the current call is in, which may not be the one on screen.
+  get voiceServer() {
+    return this.servers.find((s) => s.id === this.voiceChannel?.server_id) ?? null;
+  }
+
+  async selectServer(server: Server) {
+    this.activeServer = server;
+    this.mainView     = "chat";
+    localStorage.setItem(SERVER_KEY, String(server.id));
+    await this.#loadServer(server);
+  }
+
+  // Loads a server's channels and members, staying on the open text channel if it's still there.
+  async #loadServer(server: Server) {
+    const [channels, members] = await Promise.all([
+      this.#api(`/servers/${server.id}/channels`),
+      this.#api(`/servers/${server.id}/members`),
+    ]);
+    if (this.activeServer?.id !== server.id) return; // switched to another server meanwhile
+    this.channels = channels.ok ? await channels.json() : [];
+    this.members  = members.ok ? await members.json() : [];
+
+    const current = this.channels.find((c) => c.id === this.activeChannel?.id);
+    if (current) {
+      this.activeChannel = current; // picks up a rename
+      return;
+    }
+    const savedId = this.#savedChannels()[server.id];
+    const text = this.channels.find((c) => c.kind === "text" && c.id === savedId)
+              ?? this.channels.find((c) => c.kind === "text");
+    if (text) {
+      await this.selectChannel(text);
+    } else {
+      this.activeChannel = null;
+      this.messages      = [];
+    }
+  }
+
+  // An admin changed servers, channels or members: refetch what this user can see now.
+  async #refreshServers() {
+    const res = await this.#api("/servers");
+    if (!res.ok) return;
+    this.servers = await res.json();
+    const open = this.servers.find((s) => s.id === this.activeServer?.id);
+    if (open) {
+      this.activeServer = open;
+      await this.#loadServer(open);
+    } else if (this.servers.length > 0) {
+      await this.selectServer(this.servers[0]);
+    } else {
+      this.activeServer  = null;
+      this.channels      = [];
+      this.members       = [];
+      this.activeChannel = null;
+      this.messages      = [];
+    }
+    // Removed from the server of your call: the server also ends it on LiveKit's side.
+    if (this.voiceChannel && !this.voiceServer) await this.leaveVoice();
+  }
+
+  #savedChannels(): Record<number, number> {
+    try {
+      return JSON.parse(localStorage.getItem(CHANNEL_KEY) ?? "{}") ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  // ── Admin: servers and members ────────────────────────────
+
+  // Each returns an error message, or "" on success. The server's live update refreshes everyone.
+  async #adminRequest(path: string, method: string, body?: unknown): Promise<string> {
+    try {
+      const res = await this.#api(path, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (res.ok) return "";
+      return (await res.text()).trim() || `Failed (${res.status}).`;
+    } catch {
+      return "Can't reach the server.";
+    }
+  }
+
+  async createServer(name: string): Promise<string> {
+    const res = await this.#api("/servers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).catch(() => null);
+    if (!res?.ok) return res ? (await res.text()).trim() : "Can't reach the server.";
+    const created: Server = await res.json();
+    this.servers = [...this.servers.filter((s) => s.id !== created.id), created];
+    await this.selectServer(created);
+    return "";
+  }
+
+  renameServer(id: number, name: string) {
+    return this.#adminRequest(`/servers/${id}`, "PATCH", { name });
+  }
+
+  deleteServer(id: number) {
+    return this.#adminRequest(`/servers/${id}`, "DELETE");
+  }
+
+  addMember(serverId: number, userId: number) {
+    return this.#adminRequest(`/servers/${serverId}/members/${userId}`, "PUT");
+  }
+
+  removeMember(serverId: number, userId: number) {
+    return this.#adminRequest(`/servers/${serverId}/members/${userId}`, "DELETE");
+  }
+
+  // Everyone who has signed in, for adding people to a server.
+  async allUsers(): Promise<User[]> {
+    const res = await this.#api("/users").catch(() => null);
+    return res?.ok ? res.json() : [];
   }
 
   // ── Channels / messages ───────────────────────────────────
@@ -306,7 +439,7 @@ class GumcordStore {
     this.mainView          = "chat";
     this.pendingAttachment = null;
     this.uploadError       = "";
-    localStorage.setItem(CHANNEL_KEY, String(ch.id));
+    localStorage.setItem(CHANNEL_KEY, JSON.stringify({ ...this.#savedChannels(), [ch.server_id]: ch.id }));
 
     try {
       const res = await this.#api(`/channels/${ch.id}/messages`, { signal: this.#fetchAbort.signal });
@@ -316,15 +449,17 @@ class GumcordStore {
     }
   }
 
+  // Admins only. Shows up for everyone through the server's live update.
   async createChannel(name: string, kind: ChannelKind) {
-    const res = await this.#api("/channels", {
+    if (!this.activeServer) return;
+    const res = await this.#api(`/servers/${this.activeServer.id}/channels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, kind }),
     });
     if (!res.ok) return;
     const ch: Channel = await res.json();
-    this.channels = [...this.channels, ch];
+    if (!this.channels.some((c) => c.id === ch.id)) this.channels = [...this.channels, ch];
   }
 
   async uploadFile(file: File) {
@@ -376,11 +511,13 @@ class GumcordStore {
     this.#ws.onmessage = (e) => {
       let data: Message
         | { type: "voice"; channels: Record<string, VoiceMember[]> }
-        | { type: "online"; users: User[] };
+        | { type: "online"; users: User[] }
+        | { type: "servers" };
       try { data = JSON.parse(e.data); } catch { return; }
       if ("type" in data) {
         if (data.type === "voice") this.#setVoiceRooms(data.channels);
         else if (data.type === "online") this.online = data.users;
+        else if (data.type === "servers") void this.#refreshServers();
         return;
       }
       const msg = data;
@@ -463,7 +600,11 @@ class GumcordStore {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ channel_id: ch.id }),
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      // Gone, or no longer yours to use: don't keep trying it on every reload.
+      if (res.status === 404) localStorage.removeItem(VOICE_KEY);
+      return;
+    }
     const { token: lkToken } = await res.json();
     await this.#userAudioLoaded;
 

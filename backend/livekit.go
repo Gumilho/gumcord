@@ -13,16 +13,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 // --- access tokens, for clients joining a room and for the backend's own room API calls ---
 
 type videoGrant struct {
-	Room      string `json:"room,omitempty"`
-	RoomJoin  bool   `json:"roomJoin,omitempty"`
-	RoomList  bool   `json:"roomList,omitempty"`
-	RoomAdmin bool   `json:"roomAdmin,omitempty"`
+	Room       string `json:"room,omitempty"`
+	RoomJoin   bool   `json:"roomJoin,omitempty"`
+	RoomList   bool   `json:"roomList,omitempty"`
+	RoomAdmin  bool   `json:"roomAdmin,omitempty"`
+	RoomCreate bool   `json:"roomCreate,omitempty"` // also allows deleting rooms
 	// Lets clients publish their own deafen state as a participant attribute.
 	CanUpdateOwnMetadata bool `json:"canUpdateOwnMetadata,omitempty"`
 }
@@ -96,24 +98,53 @@ type presenceMsg struct {
 }
 
 type presenceState struct {
-	mu   sync.Mutex
-	last []byte        // the latest snapshot, sent to each new connection
-	wake chan struct{} // polls right away, when someone connects before there's a snapshot
+	mu       sync.Mutex
+	channels map[int64][]voiceMember // the latest poll; nil when there isn't one
+	last     []byte                  // the latest poll serialized, to spot changes
+	wake     chan struct{}           // polls right away
 }
 
 var presence = &presenceState{wake: make(chan struct{}, 1)}
 
-// snapshot returns the latest presence message, or nil (and asks for a poll) when there isn't one.
-func (p *presenceState) snapshot() []byte {
+func (p *presenceState) poke() {
+	select {
+	case p.wake <- struct{}{}:
+	default:
+	}
+}
+
+// snapshotFor returns what u may see of the latest poll, or nil (and asks for a poll) if there's none.
+func (p *presenceState) snapshotFor(u user) []byte {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.last == nil {
-		select {
-		case p.wake <- struct{}{}:
-		default:
+	channels := p.channels
+	p.mu.Unlock()
+	if channels == nil {
+		p.poke()
+		return nil
+	}
+	return presenceFor(u, channels)
+}
+
+// invalidate resends everyone's view on the next poll, which it starts now: used when who may see
+// which channel changes.
+func (p *presenceState) invalidate() {
+	p.mu.Lock()
+	p.last = nil
+	p.mu.Unlock()
+	p.poke()
+}
+
+// presenceFor keeps only the voice channels in u's servers.
+func presenceFor(u user, channels map[int64][]voiceMember) []byte {
+	visible := visibleChannels(u)
+	mine := map[int64][]voiceMember{}
+	for id, members := range channels {
+		if visible[id] {
+			mine[id] = members
 		}
 	}
-	return p.last
+	data, _ := json.Marshal(presenceMsg{Type: "voice", Channels: mine})
+	return data
 }
 
 func runPresence(ctx context.Context) {
@@ -130,7 +161,7 @@ func runPresence(ctx context.Context) {
 		// Nobody is looking: stop polling, and drop the snapshot so it can't be stale later.
 		if hub.count() == 0 {
 			presence.mu.Lock()
-			presence.last = nil
+			presence.channels, presence.last = nil, nil
 			presence.mu.Unlock()
 			continue
 		}
@@ -148,13 +179,22 @@ func runPresence(ctx context.Context) {
 			failing = false
 		}
 
-		data, _ := json.Marshal(presenceMsg{Type: "voice", Channels: channels})
+		data, _ := json.Marshal(channels)
 		presence.mu.Lock()
 		changed := !bytes.Equal(data, presence.last)
-		presence.last = data
+		presence.channels, presence.last = channels, data
 		presence.mu.Unlock()
 		if changed {
-			hub.broadcastRaw(data)
+			// Each user only hears about their own servers' channels; tabs of one user share the work.
+			byUser := map[int64][]byte{}
+			hub.each(func(c *websocket.Conn, u user) {
+				msg, ok := byUser[u.ID]
+				if !ok {
+					msg = presenceFor(u, channels)
+					byUser[u.ID] = msg
+				}
+				hub.send(c, msg)
+			})
 		}
 	}
 }

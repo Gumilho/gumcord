@@ -176,7 +176,15 @@
     {/if}
   </div>
 {:else}
-  <div class="empty-state">Select a channel</div>
+  <div class="empty-state">
+    {#if store.servers.length === 0}
+      {store.me?.admin
+        ? "No servers yet. Create one with the + on the left."
+        : "You're not in any servers yet. Ask an admin to add you."}
+    {:else}
+      Select a channel
+    {/if}
+  </div>
 {/if}
 
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") viewing = null; }} />

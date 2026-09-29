@@ -5,6 +5,7 @@
   import UserAvatar from "$lib/components/UserAvatar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
+  import ServerSettings from "$lib/components/ServerSettings.svelte";
 
   type MenuItem = { label: string; action: () => void; danger?: boolean };
   type MenuState = { x: number; y: number; items: MenuItem[] };
@@ -80,6 +81,7 @@
   }
 
   let menu: MenuState | null = $state(null);
+  let settingsOpen = $state(false);
   let creating: ChannelKind | null = $state(null);
   let createName = $state('');
 
@@ -97,7 +99,9 @@
     };
   }
 
+  // Admins create channels; everyone else gets the browser's own menu.
   function onNavContext(e: MouseEvent) {
+    if (!store.me?.admin || !store.activeServer) return;
     openMenu(e, [
       { label: 'New Text Channel', action: () => startCreate('text') },
       { label: 'New Voice Channel', action: () => startCreate('voice') },
@@ -158,10 +162,17 @@
 <aside class="sidebar" style="width: {width}px">
   <!-- Header -->
   <div class="sidebar-header">
-    <span class="sidebar-title">Gumcord</span>
-    <button class="icon-btn" aria-label="Log out" use:tooltip={"Log out"} onclick={() => store.logout()}>
-      <Icon name="logout" size={18} />
-    </button>
+    <span class="sidebar-title">{store.activeServer?.name ?? "Gumcord"}</span>
+    <div class="header-actions">
+      {#if store.me?.admin && store.activeServer}
+        <button class="icon-btn" aria-label="Server settings" use:tooltip={"Server settings"} onclick={() => (settingsOpen = true)}>
+          <Icon name="settings" size={18} />
+        </button>
+      {/if}
+      <button class="icon-btn" aria-label="Log out" use:tooltip={"Log out"} onclick={() => store.logout()}>
+        <Icon name="logout" size={18} />
+      </button>
+    </div>
   </div>
 
   <!-- Channels list -->
@@ -274,7 +285,8 @@
           {#if store.audioBlocked}
             <button class="audio-blocked" onclick={() => store.enableAudio()}>Click to enable audio</button>
           {:else}
-            <span class="voice-channel-name">{store.voiceChannel.name}</span>
+            <!-- Names the server too: you may be looking at a different one. -->
+            <span class="voice-channel-name">{store.voiceChannel.name}{store.voiceServer ? ` / ${store.voiceServer.name}` : ""}</span>
           {/if}
         </div>
       </div>
@@ -370,6 +382,10 @@
   </div>
 {/if}
 
+{#if settingsOpen && store.activeServer}
+  <ServerSettings server={store.activeServer} onclose={() => (settingsOpen = false)} />
+{/if}
+
 <style>
   .sidebar {
     position: relative;
@@ -435,10 +451,21 @@
   }
 
   .sidebar-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
     font-weight: 700;
     font-size: 15px;
     color: #e8eaf6;
     letter-spacing: -0.01em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
 
   .icon-btn {

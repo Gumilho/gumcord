@@ -62,8 +62,16 @@ func main() {
 	mux.HandleFunc("POST /api/auth/desktop/approve", handleDesktopApprove)
 	mux.HandleFunc("POST /api/auth/desktop/poll", handleDesktopPoll)
 	mux.HandleFunc("GET /api/me", requireUser(handleMe))
-	mux.HandleFunc("GET /api/channels", requireUser(handleChannels))
-	mux.HandleFunc("POST /api/channels", requireUser(handleCreateChannel))
+	mux.HandleFunc("GET /api/servers", requireUser(handleServers))
+	mux.HandleFunc("POST /api/servers", requireAdmin(handleCreateServer))
+	mux.HandleFunc("PATCH /api/servers/{id}", requireAdmin(handleRenameServer))
+	mux.HandleFunc("DELETE /api/servers/{id}", requireAdmin(handleDeleteServer))
+	mux.HandleFunc("GET /api/servers/{id}/channels", requireUser(handleServerChannels))
+	mux.HandleFunc("POST /api/servers/{id}/channels", requireAdmin(handleCreateChannel))
+	mux.HandleFunc("GET /api/servers/{id}/members", requireUser(handleServerMembers))
+	mux.HandleFunc("PUT /api/servers/{id}/members/{user}", requireAdmin(handleAddMember))
+	mux.HandleFunc("DELETE /api/servers/{id}/members/{user}", requireAdmin(handleRemoveMember))
+	mux.HandleFunc("GET /api/users", requireAdmin(handleUsers))
 	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
 	mux.HandleFunc("POST /api/voice/token", requireUser(handleVoiceToken))
@@ -137,9 +145,10 @@ func sameOrigin(r *http.Request) bool {
 }
 
 type channel struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	ID       int64  `json:"id"`
+	ServerID int64  `json:"server_id"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
 }
 
 // wsMsg is a chat message as sent to clients, both live over the WebSocket and in history.
@@ -155,53 +164,18 @@ type wsMsg struct {
 
 // --- handlers ---
 
-func handleChannels(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query(`SELECT id, name, kind FROM channels ORDER BY id`)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	out := []channel{}
-	for rows.Next() {
-		var c channel
-		rows.Scan(&c.ID, &c.Name, &c.Kind)
-		out = append(out, c)
-	}
-	writeJSON(w, out)
-}
-
-func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name string `json:"name"`
-		Kind string `json:"kind"`
-	}
-	err := json.NewDecoder(r.Body).Decode(&body)
-	c := channel{Name: strings.TrimSpace(body.Name), Kind: body.Kind}
-	if err != nil || c.Name == "" {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if c.Kind != "text" && c.Kind != "voice" {
-		http.Error(w, "invalid kind", http.StatusBadRequest)
-		return
-	}
-
-	if err := db.QueryRow(`INSERT INTO channels (name, kind) VALUES (?, ?) RETURNING id`, c.Name, c.Kind).Scan(&c.ID); err != nil {
-		serverError(w, err)
-		return
-	}
-	writeJSON(w, c)
-}
-
 func handleMessages(w http.ResponseWriter, r *http.Request) {
+	channelID, ok := pathID(r, "id")
+	if _, _, access := channelAccess(currentUser(r), channelID); !ok || !access {
+		http.Error(w, "no such channel", http.StatusNotFound)
+		return
+	}
 	rows, err := db.Query(`
 		SELECT m.id, m.channel_id, u.name, m.content, m.created_at, m.attachment_url, m.attachment_type
 		FROM messages m JOIN users u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
-	`, r.PathValue("id"))
+	`, channelID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -246,7 +220,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Who's online and who's in voice right now; later changes arrive as broadcasts.
 	hub.send(conn, hub.onlineMsg())
-	if snap := presence.snapshot(); snap != nil {
+	if snap := presence.snapshotFor(u); snap != nil {
 		hub.send(conn, snap)
 	}
 	// Keeps idle connections alive through proxies, and notices dead ones.
@@ -289,6 +263,11 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {
 			continue
 		}
+		// Checked per message: an admin may have removed this user from the server since they connected.
+		serverID, _, ok := channelAccess(u, in.ChannelID)
+		if !ok {
+			continue
+		}
 
 		msg := wsMsg{
 			ChannelID:      in.ChannelID,
@@ -306,7 +285,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 			log.Printf("insert message: %v", err)
 			continue
 		}
-		hub.broadcast(msg)
+		hub.broadcastTo(msg, serverAudience(serverID))
 	}
 }
 
@@ -317,8 +296,7 @@ func handleVoiceToken(w http.ResponseWriter, r *http.Request) {
 		ChannelID int64 `json:"channel_id"`
 	}
 	json.NewDecoder(r.Body).Decode(&body)
-	var kind string
-	if err := db.QueryRow(`SELECT kind FROM channels WHERE id = ?`, body.ChannelID).Scan(&kind); err != nil || kind != "voice" {
+	if _, kind, ok := channelAccess(u, body.ChannelID); !ok || kind != "voice" {
 		http.Error(w, "no such voice channel", http.StatusNotFound)
 		return
 	}

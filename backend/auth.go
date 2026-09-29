@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +40,8 @@ var (
 	oidcClientID     = os.Getenv("OIDC_CLIENT_ID")
 	oidcClientSecret = os.Getenv("OIDC_CLIENT_SECRET")
 	devLogin         = os.Getenv("DEV_LOGIN") == "1"
+	// Members of this PocketID group are Gumcord admins: they create servers and manage members.
+	adminGroup = envOr("ADMIN_GROUP", "gumcord-admins")
 
 	// Signs sessions, the OIDC round-trip state and desktop approvals.
 	tokenSecret  []byte
@@ -49,6 +52,7 @@ type user struct {
 	ID     int64  `json:"id"`
 	Name   string `json:"name"`
 	Avatar string `json:"avatar"`
+	Admin  bool   `json:"admin"`
 }
 
 type userCtxKey struct{}
@@ -138,7 +142,7 @@ func sessionUser(r *http.Request) (user, bool) {
 	}
 	u := user{}
 	u.ID, err = strconv.ParseInt(c.Subject, 10, 64)
-	if err != nil || db.QueryRow(`SELECT name, avatar FROM users WHERE id = ?`, u.ID).Scan(&u.Name, &u.Avatar) != nil {
+	if err != nil || db.QueryRow(`SELECT name, avatar, is_admin FROM users WHERE id = ?`, u.ID).Scan(&u.Name, &u.Avatar, &u.Admin) != nil {
 		return user{}, false
 	}
 	return u, true
@@ -186,7 +190,7 @@ func provider(ctx context.Context) (*oidc.Provider, *oauth2.Config, error) {
 		ClientSecret: oidcClientSecret,
 		Endpoint:     oidcProvider.Endpoint(),
 		RedirectURL:  publicURL + "/api/auth/callback",
-		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email", "groups"},
 	}, nil
 }
 
@@ -209,7 +213,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		authPage(w, http.StatusOK, authPageData{
 			Title: "Dev login", Message: "OIDC isn't configured. Pick any name to sign in as.",
 			Action: "/api/auth/dev", Method: "get", Hidden: map[string]string{"desktop": desktop},
-			NameField: true, Button: "Sign in",
+			NameField: true, AdminField: true, Button: "Sign in",
 		})
 		return
 	}
@@ -264,18 +268,19 @@ func handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var claims struct {
-		DisplayName       string `json:"display_name"`
-		Name              string `json:"name"`
-		PreferredUsername string `json:"preferred_username"`
-		Email             string `json:"email"`
-		Picture           string `json:"picture"`
+		DisplayName       string   `json:"display_name"`
+		Name              string   `json:"name"`
+		PreferredUsername string   `json:"preferred_username"`
+		Email             string   `json:"email"`
+		Picture           string   `json:"picture"`
+		Groups            []string `json:"groups"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		serverError(w, err)
 		return
 	}
 	name := firstNonEmpty(claims.DisplayName, claims.Name, claims.PreferredUsername, strings.Split(claims.Email, "@")[0], "User")
-	u, err := upsertUser(idToken.Subject, name, importAvatar(ctx, claims.Picture))
+	u, err := upsertUser(idToken.Subject, name, importAvatar(ctx, claims.Picture), slices.Contains(claims.Groups, adminGroup))
 	if err != nil {
 		serverError(w, err)
 		return
@@ -324,7 +329,7 @@ func handleDevLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name must be 1-32 characters", http.StatusBadRequest)
 		return
 	}
-	u, err := upsertUser("dev:"+strings.ToLower(name), name, "")
+	u, err := upsertUser("dev:"+strings.ToLower(name), name, "", r.URL.Query().Get("admin") == "1")
 	if err != nil {
 		serverError(w, err)
 		return
@@ -491,6 +496,7 @@ type authPageData struct {
 	Action, Method       string // a form, when Action is set
 	Hidden               map[string]string
 	NameField            bool
+	AdminField           bool // dev login: sign in as an admin
 	Button               string
 	BackLink             bool
 }
@@ -516,6 +522,7 @@ var authTmpl = template.Must(template.New("auth").Parse(`<!doctype html>
   button { padding: 10px 0; border: none; border-radius: 7px; background: #5b40c2; color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
   button:hover { background: #6d50d6; }
   a { color: #a78bfa; }
+  .check { display: flex; align-items: center; gap: 8px; color: #8a90b4; text-align: left; }
 </style>
 </head>
 <body>
@@ -528,6 +535,7 @@ var authTmpl = template.Must(template.New("auth").Parse(`<!doctype html>
   <form method="{{.Method}}" action="{{.Action}}">
     {{range $k, $v := .Hidden}}{{if $v}}<input type="hidden" name="{{$k}}" value="{{$v}}">{{end}}{{end}}
     {{if .NameField}}<input name="name" placeholder="Display name" maxlength="32" required autofocus>{{end}}
+    {{if .AdminField}}<label class="check"><input type="checkbox" name="admin" value="1"> Admin</label>{{end}}
     <button>{{.Button}}</button>
   </form>
   {{end}}

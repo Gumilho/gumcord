@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -110,25 +111,31 @@ func (h *wsHub) count() int {
 	return len(h.conns)
 }
 
-func (h *wsHub) broadcast(v any) {
+// each calls f for every connection and its user, outside the lock.
+func (h *wsHub) each(f func(c *websocket.Conn, u user)) {
+	h.mu.Lock()
+	conns := maps.Clone(h.conns)
+	h.mu.Unlock()
+	for c, u := range conns {
+		f(c, u)
+	}
+}
+
+// broadcastTo sends v to the connections whose user allow accepts.
+func (h *wsHub) broadcastTo(v any, allow func(user) bool) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
-	h.broadcastRaw(data)
+	h.each(func(c *websocket.Conn, u user) {
+		if allow(u) {
+			h.send(c, data)
+		}
+	})
 }
 
 func (h *wsHub) broadcastRaw(data []byte) {
-	h.mu.Lock()
-	conns := make([]*websocket.Conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-
-	for _, c := range conns {
-		h.send(c, data)
-	}
+	h.each(func(c *websocket.Conn, _ user) { h.send(c, data) })
 }
 
 func (h *wsHub) send(c *websocket.Conn, data []byte) {

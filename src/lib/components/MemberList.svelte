@@ -4,6 +4,12 @@
   import Icon from "$lib/components/Icon.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
 
+  // The open server's members who are online right now.
+  const online = $derived.by(() => {
+    const members = new Set(store.members.map((m) => m.id));
+    return store.online.filter((u) => members.has(u.id));
+  });
+
   // Which voice channel each online user is in, by identity (user ID).
   const voiceChannelOf = $derived.by(() => {
     const names = new Map(store.channels.map((c) => [c.id, c.name]));
@@ -22,9 +28,9 @@
 </script>
 
 <aside class="members" aria-label="Online members">
-  <h2 class="heading">Online — {store.online.length}</h2>
+  <h2 class="heading">Online — {online.length}</h2>
   <ul>
-    {#each store.online as u (u.id)}
+    {#each online as u (u.id)}
       {@const inVoice = voiceChannelOf.get(String(u.id))}
       <li class="member">
         <div class="avatar">

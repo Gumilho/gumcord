@@ -6,6 +6,7 @@
   import ChatPanel from '$lib/components/ChatPanel.svelte';
   import CallPanel from '$lib/components/CallPanel.svelte';
   import UserAudioMenu from '$lib/components/UserAudioMenu.svelte';
+  import ServerRail from '$lib/components/ServerRail.svelte';
 
   onMount(() => store.boot());
   onDestroy(() => store.destroy());
@@ -36,6 +37,7 @@
   <Login />
 {:else if store.me}
   <div class="app">
+    <ServerRail />
     <Sidebar />
     <main class="main">
       {#if store.mainView === "call" && store.room}
