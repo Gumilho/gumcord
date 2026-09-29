@@ -8,6 +8,7 @@
   import ServerSettings from "$lib/components/ServerSettings.svelte";
   import UserSettings from "$lib/components/UserSettings.svelte";
   import Soundboard from "$lib/components/Soundboard.svelte";
+  import ChannelSettings from "$lib/components/ChannelSettings.svelte";
   import { t } from "$lib/i18n.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
@@ -89,6 +90,7 @@
   let menu: MenuState | null = $state(null);
   let settingsOpen = $state(false);
   let userSettingsOpen = $state(false);
+  let editing: { channel: Channel; deleting: boolean } | null = $state(null);
   let creating: ChannelKind | null = $state(null);
   let createName = $state('');
 
@@ -117,16 +119,23 @@
 
   function onChannelContext(e: MouseEvent, ch: Channel) {
     e.stopPropagation();
+    const items: MenuItem[] = [];
     if (ch.kind === 'voice') {
-      openMenu(e, store.voiceChannel?.id === ch.id
+      items.push(...(store.voiceChannel?.id === ch.id
         ? [
             { label: t('Open Call'), action: () => store.openVoiceChannel(ch) },
             { label: t('Leave Channel'), action: () => store.leaveVoice(), danger: true },
           ]
-        : [{ label: t(store.room ? 'Switch to Channel' : 'Join Channel'), action: () => store.openVoiceChannel(ch) }]);
-    } else {
-      e.preventDefault(); // suppress browser menu for text channels
+        : [{ label: t(store.room ? 'Switch to Channel' : 'Join Channel'), action: () => store.openVoiceChannel(ch) }]));
     }
+    if (store.me?.admin) {
+      items.push(
+        { label: t('Edit Channel'), action: () => (editing = { channel: ch, deleting: false }) },
+        { label: t('Delete Channel'), action: () => (editing = { channel: ch, deleting: true }), danger: true },
+      );
+    }
+    if (items.length) openMenu(e, items);
+    else e.preventDefault(); // no browser menu on channels
   }
 
   function startCreate(kind: ChannelKind) {
@@ -150,6 +159,15 @@
 <svelte:window
   onkeydown={(e) => { if (e.key === 'Escape') { closeMenu(); cancelCreate(); } }}
 />
+
+<!-- Admins: a gear on the channel row, shown on hover. -->
+{#snippet channelGear(ch: Channel)}
+  {#if store.me?.admin}
+    <button class="channel-gear" aria-label={t("Edit channel {name}", { name: ch.name })} use:tooltip={t("Edit Channel")} onclick={() => (editing = { channel: ch, deleting: false })}>
+      <Icon name="settings" size={16} />
+    </button>
+  {/if}
+{/snippet}
 
 {#snippet createRow(kind: ChannelKind)}
   <div class="create-row">
@@ -191,15 +209,18 @@
     </div>
 
     {#each textChannels as ch (ch.id)}
-      <button
-        class="channel-row"
-        class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
-        onclick={() => store.selectChannel(ch)}
-        oncontextmenu={(e) => onChannelContext(e, ch)}
-      >
-        <span class="ch-icon"><Icon name="hash" size={18} /></span>
-        <span class="ch-name">{ch.name}</span>
-      </button>
+      <div class="channel-item">
+        <button
+          class="channel-row"
+          class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
+          onclick={() => store.selectChannel(ch)}
+          oncontextmenu={(e) => onChannelContext(e, ch)}
+        >
+          <span class="ch-icon"><Icon name="hash" size={18} /></span>
+          <span class="ch-name">{ch.name}</span>
+        </button>
+        {@render channelGear(ch)}
+      </div>
     {/each}
 
     {#if creating === 'text'}
@@ -213,16 +234,19 @@
     </div>
 
     {#each voiceChannels as ch (ch.id)}
-      <button
-        class="channel-row voice-channel"
-        class:in-voice={store.voiceChannel?.id === ch.id}
-        class:active={store.mainView === "call" && store.voiceChannel?.id === ch.id}
-        onclick={() => store.openVoiceChannel(ch)}
-        oncontextmenu={(e) => onChannelContext(e, ch)}
-      >
-        <span class="ch-icon"><Icon name="speaker" size={18} /></span>
-        <span class="ch-name">{ch.name}</span>
-      </button>
+      <div class="channel-item">
+        <button
+          class="channel-row voice-channel"
+          class:in-voice={store.voiceChannel?.id === ch.id}
+          class:active={store.mainView === "call" && store.voiceChannel?.id === ch.id}
+          onclick={() => store.openVoiceChannel(ch)}
+          oncontextmenu={(e) => onChannelContext(e, ch)}
+        >
+          <span class="ch-icon"><Icon name="speaker" size={18} /></span>
+          <span class="ch-name">{ch.name}</span>
+        </button>
+        {@render channelGear(ch)}
+      </div>
 
       <!-- Participants -->
       <!-- Your own call uses live LiveKit state; other channels use what the server reports. -->
@@ -410,6 +434,10 @@
   <UserSettings onclose={() => (userSettingsOpen = false)} />
 {/if}
 
+{#if editing}
+  <ChannelSettings channel={editing.channel} deleting={editing.deleting} onclose={() => (editing = null)} />
+{/if}
+
 {#if settingsOpen && store.activeServer}
   <ServerSettings server={store.activeServer} onclose={() => (settingsOpen = false)} />
 {/if}
@@ -562,6 +590,27 @@
   }
 
   .channel-row:hover { background: #2d3058; color: #c8cde8; }
+
+  .channel-item { position: relative; }
+
+  .channel-gear {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    display: flex;
+    padding: 3px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: #8a90b4;
+    opacity: 0;
+    transform: translateY(-50%);
+    cursor: pointer;
+  }
+
+  .channel-item:hover .channel-gear, .channel-gear:focus-visible { opacity: 1; }
+  .channel-gear:hover { color: #e4e6f5; }
+  .channel-item:has(.channel-gear) .channel-row { padding-right: 32px; }
   .channel-row.active {
     background: #343764;
     color: #e4eaf5;

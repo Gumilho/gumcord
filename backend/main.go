@@ -83,6 +83,8 @@ func main() {
 	}
 	mux.HandleFunc("GET /api/users", requireAdmin(handleUsers))
 	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
+	mux.HandleFunc("PATCH /api/channels/{id}", requireAdmin(handleRenameChannel))
+	mux.HandleFunc("DELETE /api/channels/{id}", requireAdmin(handleDeleteChannel))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
 	mux.HandleFunc("POST /api/voice/token", requireUser(handleVoiceToken))
 	mux.HandleFunc("GET /api/user-audio", requireUser(handleUserAudio))

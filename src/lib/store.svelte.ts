@@ -672,6 +672,15 @@ class GumcordStore {
     if (!this.channels.some((c) => c.id === ch.id)) this.channels = [...this.channels, ch];
   }
 
+  // Admins only. Everyone's channel list updates from the server's broadcast.
+  renameChannel(id: number, name: string) {
+    return this.#submit(`/channels/${id}`, "PATCH", { name });
+  }
+
+  deleteChannel(id: number) {
+    return this.#submit(`/channels/${id}`, "DELETE");
+  }
+
   async uploadFile(file: File) {
     this.uploadError = "";
     this.uploading   = true;

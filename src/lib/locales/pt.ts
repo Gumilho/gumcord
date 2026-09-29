@@ -129,6 +129,14 @@ export const pt: Record<string, string> = {
   "Click again to delete “{name}”": "Clique de novo para excluir “{name}”",
   "Delete server": "Excluir servidor",
   "Change image": "Trocar imagem",
+  "Channel settings": "Configurações do canal",
+  "Channel name": "Nome do canal",
+  "Edit Channel": "Editar canal",
+  "Delete Channel": "Excluir canal",
+  "Edit channel {name}": "Editar canal {name}",
+  "Delete channel": "Excluir canal",
+  "Deleting removes the channel and all its messages for everyone.": "Excluir apaga o canal e todas as mensagens dele para todos.",
+  "Deleting removes the channel for everyone and ends its call.": "Excluir remove o canal para todos e encerra a chamada dele.",
   "Remove image": "Remover imagem",
 
   // ── Members ──

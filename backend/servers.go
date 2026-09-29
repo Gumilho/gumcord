@@ -325,6 +325,71 @@ func handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 
 // --- members ---
 
+// handleRenameChannel: admins only.
+func handleRenameChannel(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	if !ok {
+		http.Error(w, "no such channel", http.StatusNotFound)
+		return
+	}
+	name, ok := readName(w, r)
+	if !ok {
+		return
+	}
+	res, err := db.Exec(`UPDATE channels SET name = ? WHERE id = ?`, name, id)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			http.Error(w, "a channel with that name already exists", http.StatusConflict)
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "no such channel", http.StatusNotFound)
+		return
+	}
+	notifyServersChanged()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleDeleteChannel removes a channel with its messages, and ends its call. Admins only.
+func handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(r, "id")
+	var kind string
+	if ok {
+		ok = db.QueryRow(`SELECT kind FROM channels WHERE id = ?`, id).Scan(&kind) == nil
+	}
+	if !ok {
+		http.Error(w, "no such channel", http.StatusNotFound)
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback()
+	// Messages don't cascade from channels.
+	if _, err := tx.Exec(`DELETE FROM messages WHERE channel_id = ?`, id); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err := tx.Exec(`DELETE FROM channels WHERE id = ?`, id); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		serverError(w, err)
+		return
+	}
+	if kind == "voice" {
+		go endVoiceCalls([]string{fmt.Sprintf("channel-%d", id)}, "")
+	}
+	notifyServersChanged()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func queryUsers(w http.ResponseWriter, query string, args ...any) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
