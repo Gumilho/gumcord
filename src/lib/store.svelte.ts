@@ -12,9 +12,9 @@ export type ChannelKind = "text" | "voice";
 export interface Server { id: number; name: string; icon: string; }
 export interface Channel { id: number; server_id: number; name: string; kind: ChannelKind; }
 type AttachmentType = "image" | "file";
-interface Message {
-  id: number; channel_id: number; author: string; content: string; created_at: string;
-  attachment_url?: string; attachment_type?: AttachmentType;
+export interface Message {
+  id: number; channel_id: number; author_id: number; author: string; content: string; created_at: string;
+  edited_at?: string; attachment_url?: string; attachment_type?: AttachmentType;
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; admin: boolean; }
@@ -700,6 +700,23 @@ class GumcordStore {
     }
   }
 
+  // Your own messages; admins can also delete anyone's. Everyone's view updates from the server's broadcast.
+  editMessage(id: number, content: string) {
+    return this.#submit(`/messages/${id}`, "PATCH", { content });
+  }
+
+  deleteMessage(id: number) {
+    return this.#submit(`/messages/${id}`, "DELETE");
+  }
+
+  canEdit(msg: Message) {
+    return msg.author_id === this.me?.id;
+  }
+
+  canDelete(msg: Message) {
+    return msg.author_id === this.me?.id || !!this.me?.admin;
+  }
+
   sendMessage() {
     const content = this.draft.trim();
     const att     = this.pendingAttachment;
@@ -732,12 +749,17 @@ class GumcordStore {
         | { type: "voice"; channels: Record<string, VoiceMember[]> }
         | { type: "online"; users: User[] }
         | { type: "servers" }
-        | { type: Library; server_id: number };
+        | { type: Library; server_id: number }
+        | { type: "message_edited"; id: number; content: string; edited_at: string }
+        | { type: "message_deleted"; id: number };
       try { data = JSON.parse(e.data); } catch { return; }
       if ("type" in data) {
         if (data.type === "voice") this.#setVoiceRooms(data.channels);
         else if (data.type === "online") this.online = data.users;
         else if (data.type === "servers") void this.#refreshServers();
+        else if (data.type === "message_edited") {
+          this.messages = this.messages.map((m) => (m.id === data.id ? { ...m, content: data.content, edited_at: data.edited_at } : m));
+        } else if (data.type === "message_deleted") this.messages = this.messages.filter((m) => m.id !== data.id);
         else if (data.type === "emotes" && data.server_id === this.activeServer?.id) void this.#loadEmotes();
         else if (data.type === "sounds" && data.server_id === this.voiceChannel?.server_id) void this.#loadSounds();
         return;

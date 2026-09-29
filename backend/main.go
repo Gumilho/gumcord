@@ -83,6 +83,8 @@ func main() {
 	}
 	mux.HandleFunc("GET /api/users", requireAdmin(handleUsers))
 	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
+	mux.HandleFunc("PATCH /api/messages/{id}", requireUser(handleEditMessage))
+	mux.HandleFunc("DELETE /api/messages/{id}", requireUser(handleDeleteMessage))
 	mux.HandleFunc("PATCH /api/channels/{id}", requireAdmin(handleRenameChannel))
 	mux.HandleFunc("DELETE /api/channels/{id}", requireAdmin(handleDeleteChannel))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))
@@ -169,9 +171,11 @@ type channel struct {
 type wsMsg struct {
 	ID             int64  `json:"id"`
 	ChannelID      int64  `json:"channel_id"`
+	AuthorID       int64  `json:"author_id"`
 	Author         string `json:"author"`
 	Content        string `json:"content"`
 	CreatedAt      string `json:"created_at"`
+	EditedAt       string `json:"edited_at,omitempty"`
 	AttachmentURL  string `json:"attachment_url,omitempty"`
 	AttachmentType string `json:"attachment_type,omitempty"`
 }
@@ -185,7 +189,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := db.Query(`
-		SELECT m.id, m.channel_id, u.name, m.content, m.created_at, m.attachment_url, m.attachment_type
+		SELECT m.id, m.channel_id, m.user_id, u.name, m.content, m.created_at, COALESCE(m.edited_at, ''), m.attachment_url, m.attachment_type
 		FROM messages m JOIN profiles u ON m.user_id = u.id
 		WHERE m.channel_id = ?
 		ORDER BY m.id DESC LIMIT 50
@@ -199,7 +203,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	msgs := []wsMsg{}
 	for rows.Next() {
 		var m wsMsg
-		rows.Scan(&m.ID, &m.ChannelID, &m.Author, &m.Content, &m.CreatedAt, &m.AttachmentURL, &m.AttachmentType)
+		rows.Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.Author, &m.Content, &m.CreatedAt, &m.EditedAt, &m.AttachmentURL, &m.AttachmentType)
 		msgs = append(msgs, m)
 	}
 
@@ -289,6 +293,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 
 		msg := wsMsg{
 			ChannelID:      in.ChannelID,
+			AuthorID:       u.ID,
 			Author:         u.Name,
 			Content:        in.Content,
 			AttachmentURL:  in.AttachmentURL,

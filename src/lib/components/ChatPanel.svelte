@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { store, type Emote } from "$lib/store.svelte.ts";
+  import { store, type Emote, type Message } from "$lib/store.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
@@ -81,6 +81,15 @@
 
   function onInputKeydown(e: KeyboardEvent) {
     if (suggestions.length && !e.isComposing && onSuggestionKey(e)) return;
+    // Up in an empty box edits your last message.
+    if (e.key === "ArrowUp" && !store.draft) {
+      const mine = store.messages.findLast((m) => store.canEdit(m));
+      if (mine) {
+        e.preventDefault();
+        startEdit(mine);
+      }
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (!store.uploading) store.sendMessage();
@@ -108,11 +117,87 @@
     if (atBottom) msgEnd?.scrollIntoView({ block: "end" });
   }
 
-  // Scroll to bottom whenever messages change
+  // Scroll to the bottom when a message arrives or another channel opens, not when one is edited or deleted.
+  let lastMessageId: number | undefined;
   $effect(() => {
-    store.messages;
+    const last = store.messages.at(-1)?.id;
+    if (last === lastMessageId) return;
+    lastMessageId = last;
     setTimeout(() => msgEnd?.scrollIntoView({ block: "end" }), 0);
   });
+
+  // ── Editing and deleting messages ──
+  let editingId: number | null = $state(null);
+  let editText = $state("");
+  let deletingId: number | null = $state(null);
+  let actionError = $state("");
+
+  function startEdit(msg: Message) {
+    editingId = msg.id;
+    editText = msg.content;
+    deletingId = null;
+    actionError = "";
+  }
+
+  function stopEdit() {
+    editingId = null;
+    textarea?.focus();
+  }
+
+  async function saveEdit(msg: Message) {
+    const content = editText.trim();
+    if (content === msg.content.trim()) return stopEdit();
+    // Emptying a message is deleting it, as in Discord.
+    if (!content && !msg.attachment_url) {
+      editingId = null;
+      deletingId = msg.id;
+      return;
+    }
+    actionError = await store.editMessage(msg.id, content);
+    if (!actionError) stopEdit();
+  }
+
+  function onEditKeydown(e: KeyboardEvent, msg: Message) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      stopEdit();
+    } else if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      void saveEdit(msg);
+    }
+  }
+
+  // Shift-click deletes straight away; otherwise the message asks first.
+  async function askDelete(e: MouseEvent, msg: Message) {
+    if (e.shiftKey) return void deleteNow(msg);
+    deletingId = msg.id;
+    actionError = "";
+  }
+
+  async function deleteNow(msg: Message) {
+    actionError = await store.deleteMessage(msg.id);
+    if (!actionError) deletingId = null;
+  }
+
+  // Editing or confirming a delete on the last message would otherwise open below the fold.
+  function revealMessage(node: HTMLElement) {
+    node.closest(".message")?.scrollIntoView({ block: "nearest" });
+  }
+
+  // Grows the edit box with its text, and puts the caret at the end.
+  function editBox(node: HTMLTextAreaElement) {
+    const fit = () => {
+      node.style.height = "auto";
+      node.style.height = `${node.scrollHeight}px`;
+    };
+    fit();
+    node.focus();
+    node.setSelectionRange(node.value.length, node.value.length);
+    revealMessage(node);
+    node.addEventListener("input", fit);
+    return () => node.removeEventListener("input", fit);
+  }
 
   function formatTime(raw: string) {
     if (!raw) return "";
@@ -134,12 +219,32 @@
     <div class="chat-column">
       <div class="messages" onscroll={onMessagesScroll}>
         {#each store.messages as msg (msg.id)}
-          <div class="message">
+          <div class="message" class:editing={editingId === msg.id} class:deleting={deletingId === msg.id}>
+            {#if editingId !== msg.id && store.canDelete(msg)}
+              <div class="msg-actions">
+                {#if store.canEdit(msg)}
+                  <button type="button" aria-label={t("Edit message")} use:tooltip={t("Edit")} onclick={() => startEdit(msg)}>
+                    <Icon name="edit" size={16} />
+                  </button>
+                {/if}
+                <button type="button" class="danger" aria-label={t("Delete message")} use:tooltip={t("Delete")} onclick={(e) => askDelete(e, msg)}>
+                  <Icon name="trash" size={16} />
+                </button>
+              </div>
+            {/if}
             <div class="msg-meta">
               <span class="msg-author">{msg.author}</span>
               <span class="msg-time">{formatTime(msg.created_at)}</span>
             </div>
-            <MessageContent content={msg.content} onresize={onImageLoad} onview={(src) => (viewing = src)} />
+            {#if editingId === msg.id}
+              <textarea class="edit-input" rows="1" aria-label={t("Edit message")} bind:value={editText} onkeydown={(e) => onEditKeydown(e, msg)} {@attach editBox}></textarea>
+              <p class="edit-hint">
+                {t("escape to")} <button type="button" onclick={stopEdit}>{t("cancel")}</button> •
+                {t("enter to")} <button type="button" onclick={() => saveEdit(msg)}>{t("save")}</button>
+              </p>
+            {:else}
+              <MessageContent content={msg.content} edited={msg.edited_at ? formatTime(msg.edited_at) : ""} onresize={onImageLoad} onview={(src) => (viewing = src)} />
+            {/if}
             {#if msg.attachment_url && msg.attachment_type === "image"}
               <button
                 class="msg-image-btn"
@@ -161,6 +266,14 @@
                 {fileName(msg.attachment_url)}
               </a>
             {/if}
+            {#if deletingId === msg.id}
+              <div class="confirm-delete" role="alertdialog" aria-label={t("Delete message")} {@attach revealMessage}>
+                <span>{t("Delete this message?")}</span>
+                <button type="button" class="delete-btn" onclick={() => deleteNow(msg)}>{t("Delete")}</button>
+                <button type="button" class="cancel-btn" onclick={() => (deletingId = null)}>{t("Cancel")}</button>
+              </div>
+            {/if}
+            {#if actionError && (editingId === msg.id || deletingId === msg.id)}<p class="action-error">{actionError}</p>{/if}
           </div>
         {/each}
         <div bind:this={msgEnd}></div>
@@ -331,9 +444,105 @@
   }
 
   .message {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    margin: 0 -8px;
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  .message:hover, .message.editing, .message.deleting { background: #1f2136; }
+
+  /* Edit and delete, over the message's top-right corner while hovered. */
+  .msg-actions {
+    position: absolute;
+    top: -14px;
+    right: 12px;
+    z-index: 1;
+    display: none;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid #2e3154;
+    border-radius: 6px;
+    background: #1a1b2e;
+    box-shadow: 0 2px 8px #0006;
+  }
+
+  .message:hover .msg-actions, .msg-actions:focus-within { display: flex; }
+
+  .msg-actions button {
+    display: flex;
+    padding: 5px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: #8a90b4;
+    cursor: pointer;
+  }
+
+  .msg-actions button:hover { background: #2a2c48; color: #e4e6f5; }
+  .msg-actions button.danger:hover { color: #f87171; }
+
+  .edit-input {
+    width: 100%;
+    margin-top: 2px;
+    padding: 9px 12px;
+    border: 1px solid #3f4270;
+    border-radius: 8px;
+    background: #23253a;
+    color: #dbdef0;
+    font: inherit;
+    font-size: 15px;
+    line-height: 22px;
+    resize: none;
+    outline: none;
+  }
+
+  .edit-hint {
+    margin: 2px 0 0;
+    color: #6b7290;
+    font-size: 12px;
+  }
+
+  .edit-hint button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: #a78bfa;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .edit-hint button:hover { text-decoration: underline; }
+
+  .confirm-delete {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    color: #c8cce8;
+    font-size: 13px;
+  }
+
+  .delete-btn, .cancel-btn {
+    padding: 5px 12px;
+    border: none;
+    border-radius: 5px;
+    font: 600 13px system-ui, sans-serif;
+    cursor: pointer;
+  }
+
+  .delete-btn { background: #dc2626; color: #fff; }
+  .delete-btn:hover { background: #b91c1c; }
+  .cancel-btn { background: #2a2c48; color: #c8cce8; }
+  .cancel-btn:hover { background: #33365a; }
+
+  .action-error {
+    margin: 2px 0 0;
+    color: #f87171;
+    font-size: 13px;
   }
 
   .msg-meta {

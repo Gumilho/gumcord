@@ -5,8 +5,9 @@
   import { t } from "$lib/i18n.svelte.ts";
 
   // A message's text with its links clickable and emotes shown, and link previews underneath.
-  let { content, onresize, onview }: {
+  let { content, edited = "", onresize, onview }: {
     content: string;
+    edited?: string; // when it was last edited, if it was
     onresize: () => void; // a preview appeared or its picture loaded: the chat grew
     onview: (src: string) => void; // open a picture in the viewer
   } = $props();
@@ -17,7 +18,7 @@
 
 {#if content}
   <!-- On one line: the text keeps its own spacing (pre-wrap). -->
-  <p class="msg-content" class:jumbo={onlyEmotes(pieces)}>{#each pieces as p, i (i)}{#if p.kind === "text"}{p.text}{:else if p.kind === "emote"}<img class="emote" src={p.emote.url} alt=":{p.emote.name}:" title=":{p.emote.name}:" />{:else}<a href={p.url} target="_blank" rel="noreferrer noopener">{p.url}</a>{/if}{/each}</p>
+  <p class="msg-content" class:jumbo={onlyEmotes(pieces)}>{#each pieces as p, i (i)}{#if p.kind === "text"}{p.text}{:else if p.kind === "emote"}<img class="emote" src={p.emote.url} alt=":{p.emote.name}:" title=":{p.emote.name}:" />{:else}<a href={p.url} target="_blank" rel="noreferrer noopener">{p.url}</a>{/if}{/each}{#if edited}<span class="edited" title={t("Edited {time}", { time: edited })}>{" "}{t("(edited)")}</span>{/if}</p>
 {/if}
 
 {#each previews as url (url)}
@@ -50,6 +51,11 @@
     line-height: 1.5;
     word-break: break-word;
     white-space: pre-wrap;
+  }
+
+  .edited {
+    color: #5c6283;
+    font-size: 11px;
   }
 
   .emote {

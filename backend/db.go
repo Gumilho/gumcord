@@ -78,6 +78,7 @@ var migrations = []func(*sql.Tx) error{
 	migrateEmotes,
 	migrateSounds,
 	migrateServerIcons,
+	migrateMessageEdits,
 }
 
 func migrate() {
@@ -199,6 +200,11 @@ func migrateStreamAudio(tx *sql.Tx) error {
 
 // migrateProfiles lets people set their own name and picture. The identity provider's stay in
 // name/avatar (refreshed at each login); the profiles view is what everyone else sees.
+func migrateMessageEdits(tx *sql.Tx) error {
+	_, err := tx.Exec(`ALTER TABLE messages ADD COLUMN edited_at DATETIME`)
+	return err
+}
+
 func migrateServerIcons(tx *sql.Tx) error {
 	_, err := tx.Exec(`ALTER TABLE servers ADD COLUMN icon TEXT NOT NULL DEFAULT ''`)
 	return err
