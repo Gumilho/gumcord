@@ -95,6 +95,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 0; /* a button's own padding would shrink the picture, leaving coloured edges */
     border: none;
     border-radius: 50%;
     background: hsl(var(--hue) 35% 32%);
