@@ -6,6 +6,8 @@
   import UserAvatar from "$lib/components/UserAvatar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
+  import MemberList from "$lib/components/MemberList.svelte";
+  import MemberListToggle from "$lib/components/MemberListToggle.svelte";
 
   const count = $derived(store.voiceParticipants.length + store.streams.length);
   const cols = $derived(count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
@@ -65,7 +67,8 @@
 <div class="call">
   <header class="call-header">
     <span class="header-icon"><Icon name="speaker" /></span>
-    <span>{store.voiceChannel?.name}</span>
+    <span class="header-title">{store.voiceChannel?.name}</span>
+    <MemberListToggle />
   </header>
 
   {#snippet personTile(p: VoiceParticipant)}
@@ -137,63 +140,71 @@
     </div>
   {/snippet}
 
-  <div class="stage" class:focus={!!focused}>
-    {#if focused}
-      <div class="spotlight-area">
-        {@render streamTile(focused, true)}
+  <!-- The header spans the call and the member list, as in the chat view. -->
+  <div class="call-body">
+    <div class="call-column">
+      <div class="stage" class:focus={!!focused}>
+        {#if focused}
+          <div class="spotlight-area">
+            {@render streamTile(focused, true)}
+          </div>
+        {/if}
+        <div class:grid={!focused} class:strip={!!focused} style:--cols={cols} style:--rows={rows}>
+          {#each tiledStreams as s (s.identity)}
+            {@render streamTile(s, false)}
+          {/each}
+          {#each store.voiceParticipants as p (p.identity)}
+            {@render personTile(p)}
+          {/each}
+        </div>
       </div>
-    {/if}
-    <div class:grid={!focused} class:strip={!!focused} style:--cols={cols} style:--rows={rows}>
-      {#each tiledStreams as s (s.identity)}
-        {@render streamTile(s, false)}
-      {/each}
-      {#each store.voiceParticipants as p (p.identity)}
-        {@render personTile(p)}
-      {/each}
+
+      <div class="controls">
+        <button class="ctrl" aria-disabled="true" aria-label="Turn on camera" use:tooltip={"Camera is coming soon"}>
+          <Icon name="camera" size={24} />
+        </button>
+        <button
+          class="ctrl"
+          class:sharing={store.screenSharing}
+          aria-disabled={!store.canScreenShare}
+          aria-pressed={store.screenSharing}
+          aria-label={store.shareLabel}
+          use:tooltip={store.shareLabel}
+          onclick={() => store.toggleScreenShare()}
+        >
+          <Icon name="screenShare" size={24} />
+        </button>
+
+        <span class="divider" aria-hidden="true"></span>
+
+        <button
+          class="ctrl"
+          class:off={store.voiceMuted}
+          aria-label={store.muteLabel}
+          aria-pressed={store.voiceMuted}
+          use:tooltip={store.muteLabel}
+          onclick={() => store.toggleMute()}
+        >
+          <VoiceIcon kind="mic" slashed={store.voiceMuted} size={24} />
+        </button>
+        <button
+          class="ctrl"
+          class:off={store.voiceDeafened}
+          aria-label={store.deafenLabel}
+          aria-pressed={store.voiceDeafened}
+          use:tooltip={store.deafenLabel}
+          onclick={() => store.toggleDeafen()}
+        >
+          <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
+        </button>
+        <button class="ctrl hangup" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
+          <Icon name="hangup" size={24} />
+        </button>
+      </div>
     </div>
-  </div>
-
-  <div class="controls">
-    <button class="ctrl" aria-disabled="true" aria-label="Turn on camera" use:tooltip={"Camera is coming soon"}>
-      <Icon name="camera" size={24} />
-    </button>
-    <button
-      class="ctrl"
-      class:sharing={store.screenSharing}
-      aria-disabled={!store.canScreenShare}
-      aria-pressed={store.screenSharing}
-      aria-label={store.shareLabel}
-      use:tooltip={store.shareLabel}
-      onclick={() => store.toggleScreenShare()}
-    >
-      <Icon name="screenShare" size={24} />
-    </button>
-
-    <span class="divider" aria-hidden="true"></span>
-
-    <button
-      class="ctrl"
-      class:off={store.voiceMuted}
-      aria-label={store.muteLabel}
-      aria-pressed={store.voiceMuted}
-      use:tooltip={store.muteLabel}
-      onclick={() => store.toggleMute()}
-    >
-      <VoiceIcon kind="mic" slashed={store.voiceMuted} size={24} />
-    </button>
-    <button
-      class="ctrl"
-      class:off={store.voiceDeafened}
-      aria-label={store.deafenLabel}
-      aria-pressed={store.voiceDeafened}
-      use:tooltip={store.deafenLabel}
-      onclick={() => store.toggleDeafen()}
-    >
-      <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
-    </button>
-    <button class="ctrl hangup" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
-      <Icon name="hangup" size={24} />
-    </button>
+    {#if store.showMembers}
+      <MemberList />
+    {/if}
   </div>
 </div>
 
@@ -206,11 +217,13 @@
     background: #12131f;
   }
 
+  /* Same size as the chat header, so switching views doesn't shift anything. */
   .call-header {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 16px;
+    min-height: 48px;
+    padding: 0 12px 0 16px;
     border-bottom: 1px solid #2a2d4a;
     color: #e8eaf6;
     font-weight: 600;
@@ -221,6 +234,27 @@
   .header-icon {
     display: flex;
     color: #8a90b4;
+  }
+
+  .header-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .call-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .call-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   /* ── Tile grid: sized so every row fits the stage height at 16:9 ── */
