@@ -16,3 +16,6 @@ backend/data/
 # From before data moved into data/
 backend/*.db
 backend/uploads/
+
+# Personal notes
+new_features.md
