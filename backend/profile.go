@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -40,7 +39,7 @@ func handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 // handleSetAvatar takes an uploaded image as your picture.
 func handleSetAvatar(w http.ResponseWriter, r *http.Request) {
-	url, ok := uploadedImage(w, r, "avatar", maxAvatarUpload, "pictures can be up to 4 MB")
+	url, ok := uploadedFile(w, r, imageKind, "avatar", maxAvatarUpload, "pictures can be up to 4 MB")
 	if !ok {
 		return
 	}
@@ -50,36 +49,6 @@ func handleSetAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	profileChanged(w, u.ID)
-}
-
-// uploadedImage saves the picture in a form's "file" field, answering the request itself when
-// there's no usable picture.
-func uploadedImage(w http.ResponseWriter, r *http.Request, prefix string, limit int64, tooLarge string) (string, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	if err := r.ParseMultipartForm(avatarFormMemory); err != nil {
-		http.Error(w, tooLarge, http.StatusRequestEntityTooLarge)
-		return "", false
-	}
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "no picture", http.StatusBadRequest)
-		return "", false
-	}
-	defer file.Close()
-	data, err := io.ReadAll(file)
-	if err != nil {
-		serverError(w, err)
-		return "", false
-	}
-	url, err := saveImage(prefix, data)
-	if err == errNotImage {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return "", false
-	} else if err != nil {
-		serverError(w, err)
-		return "", false
-	}
-	return url, true
 }
 
 // handleResetAvatar goes back to the identity provider's picture.

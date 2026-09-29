@@ -74,9 +74,11 @@ func main() {
 	mux.HandleFunc("GET /api/servers/{id}/members", requireUser(handleServerMembers))
 	mux.HandleFunc("PUT /api/servers/{id}/members/{user}", requireAdmin(handleAddMember))
 	mux.HandleFunc("DELETE /api/servers/{id}/members/{user}", requireAdmin(handleRemoveMember))
-	mux.HandleFunc("GET /api/servers/{id}/emotes", requireUser(handleServerEmotes))
-	mux.HandleFunc("POST /api/servers/{id}/emotes", requireUser(handleAddEmote))
-	mux.HandleFunc("DELETE /api/servers/{id}/emotes/{emote}", requireUser(handleDeleteEmote))
+	for _, l := range []library{emotes, sounds} {
+		mux.HandleFunc("GET /api/servers/{id}/"+l.table, requireUser(l.handleList))
+		mux.HandleFunc("POST /api/servers/{id}/"+l.table, requireUser(l.handleAdd))
+		mux.HandleFunc("DELETE /api/servers/{id}/"+l.table+"/{item}", requireUser(l.handleDelete))
+	}
 	mux.HandleFunc("GET /api/users", requireAdmin(handleUsers))
 	mux.HandleFunc("GET /api/channels/{id}/messages", requireUser(handleMessages))
 	mux.HandleFunc("GET /api/ws", requireUser(handleWS))

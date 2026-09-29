@@ -55,3 +55,52 @@ export function playSound(name: SoundName) {
     else ctx.resume().then(start, () => {});
   });
 }
+
+// ── Soundboard clips: decoded on first play, then kept ──
+
+// However long the file, nobody holds the call hostage.
+export const MAX_CLIP_SECONDS = 10;
+const clips = new Map<string, Promise<AudioBuffer>>();
+
+async function decode(data: ArrayBuffer) {
+  return new OfflineAudioContext(1, 1, 48_000).decodeAudioData(data);
+}
+
+function loadClip(url: string) {
+  let clip = clips.get(url);
+  if (!clip) {
+    clip = fetch(url).then((r) => r.arrayBuffer()).then(decode);
+    clip.catch(() => clips.delete(url)); // try again next time
+    clips.set(url, clip);
+  }
+  return clip;
+}
+
+export async function playClip(url: string, volume: number) {
+  let buffer: AudioBuffer;
+  try {
+    buffer = await loadClip(url);
+  } catch (err) {
+    console.warn("Couldn't play sound:", err);
+    return;
+  }
+  const ctx = audioContext();
+  if (ctx.state !== "running") await ctx.resume().catch(() => {});
+  const gain = ctx.createGain();
+  gain.gain.value = volume;
+  gain.connect(ctx.destination);
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(gain);
+  src.start();
+  src.stop(ctx.currentTime + MAX_CLIP_SECONDS);
+}
+
+// A file's length in seconds, or null when it isn't a sound this browser can play.
+export async function clipDuration(file: File) {
+  try {
+    return (await decode(await file.arrayBuffer())).duration;
+  } catch {
+    return null;
+  }
+}

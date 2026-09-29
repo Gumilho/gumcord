@@ -43,7 +43,7 @@
     e.preventDefault();
     if (!adding) return;
     busy = true;
-    error = await store.addEmote(newName.trim(), adding.file);
+    error = await store.addItem("emotes", newName.trim(), adding.file);
     busy = false;
     if (!error) stopAdding();
   }
@@ -54,7 +54,7 @@
       return;
     }
     confirming = null;
-    error = await store.deleteEmote(emote);
+    error = await store.removeItem("emotes", emote);
   }
 
   // A click anywhere else closes it (the toggle button handles its own clicks).
@@ -100,7 +100,7 @@
           <button class="pick" type="button" title=":{emote.name}:" onclick={(e) => onpick(emote, e.shiftKey)}>
             <img src={emote.url} alt=":{emote.name}:" loading="lazy" />
           </button>
-          {#if store.canDeleteEmote(emote)}
+          {#if store.canRemove(emote)}
             <button
               class="remove"
               class:confirming={confirming === emote.id}

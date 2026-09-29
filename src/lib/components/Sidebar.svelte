@@ -7,6 +7,10 @@
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
   import ServerSettings from "$lib/components/ServerSettings.svelte";
   import UserSettings from "$lib/components/UserSettings.svelte";
+  import Soundboard from "$lib/components/Soundboard.svelte";
+
+  let soundboardBtn: HTMLButtonElement | null = $state(null);
+  let soundboardOpen = $state(false);
 
   type MenuItem = { label: string; action: () => void; danger?: boolean };
   type MenuState = { x: number; y: number; items: MenuItem[] };
@@ -304,6 +308,19 @@
         >
           <Icon name="screenShare" />
         </button>
+        <button
+          class="icon-btn"
+          aria-label="Soundboard"
+          aria-expanded={soundboardOpen}
+          use:tooltip={"Soundboard"}
+          bind:this={soundboardBtn}
+          onclick={() => (soundboardOpen = !soundboardOpen)}
+        >
+          <Icon name="soundboard" />
+        </button>
+        {#if soundboardOpen && soundboardBtn}
+          <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
+        {/if}
         <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
           <Icon name="hangup" />
         </button>

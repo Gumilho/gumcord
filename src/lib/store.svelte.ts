@@ -4,7 +4,7 @@ import {
 } from "livekit-client";
 import { audioContext, audioRunning, resumeAudio, setOutputDevice } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
-import { playSound, preloadSounds } from "./sounds.ts";
+import { playClip, playSound, preloadSounds } from "./sounds.ts";
 
 export type ChannelKind = "text" | "voice";
 // Servers group channels. Admins see every server; everyone else, the ones they've been added to.
@@ -17,8 +17,12 @@ interface Message {
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; admin: boolean; }
-// A server's own picture, written :name: in messages.
-export interface Emote { id: number; name: string; url: string; created_by: number; }
+// Something a server's members uploaded: an emote (a picture written :name: in messages) or a
+// soundboard sound. Whoever added it, or an admin, can remove it.
+export interface ServerItem { id: number; name: string; url: string; created_by: number; }
+export type Emote = ServerItem;
+export type Sound = ServerItem;
+export type Library = "emotes" | "sounds";
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // Someone in a voice channel as the server reports it, for channels you aren't in yourself.
@@ -64,6 +68,17 @@ const DEFAULT_KEYBINDS: KeybindPrefs = {
 };
 // Holding push-to-talk a moment after release keeps the ends of words.
 const PTT_RELEASE_MS = 150;
+
+// Soundboard: sounds travel through the call as data messages naming one of the server's uploads.
+const SOUNDBOARD_TOPIC   = "soundboard";
+const SOUND_URL          = /^\/files\/sound-[0-9a-f]{24}\.(?:mp3|wav|ogg)$/;
+const SOUND_COOLDOWN_MS  = 1_000;
+const SOUND_VOLUME_KEY   = "gc_soundboard_volume";
+
+function loadSoundboardVolume() {
+  const v = Number(localStorage.getItem(SOUND_VOLUME_KEY) ?? "0.5");
+  return Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0.5;
+}
 
 // Chosen microphone and speakers, remembered per device. Missing means the system default.
 const DEVICES_KEY = "gc_devices";
@@ -149,6 +164,9 @@ class GumcordStore {
   emotes:        Emote[]        = $state.raw([]);
   // By lowercase name: :Kappa: and :kappa: are one emote.
   emoteMap = $derived(new Map(this.emotes.map((e) => [e.name.toLowerCase(), e])));
+  // The soundboard of the server your call is in (which may not be the one on screen).
+  sounds:        Sound[]        = $state.raw([]);
+  soundboardVolume              = $state(loadSoundboardVolume());
 
   // channels + messages
   channels:      Channel[]      = $state([]);
@@ -207,6 +225,8 @@ class GumcordStore {
   #wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   #audioEls:     Map<string, HTMLAudioElement> = new Map();
   #userAudioSaves = new Map<string, ReturnType<typeof setTimeout>>();
+  // When you, and each person in the call, last played a sound.
+  #soundPlayed = new Map<string, number>();
   // Push-to-talk key held (or within the release delay).
   #pttHeld = false;
   #pttRelease: ReturnType<typeof setTimeout> | undefined;
@@ -410,34 +430,89 @@ class GumcordStore {
     if (res.ok && this.activeServer?.id === server.id) this.emotes = await res.json();
   }
 
-  // Adds an emote to the open server; answers with an error to show, or "".
-  async addEmote(name: string, file: File): Promise<string> {
-    if (!this.activeServer) return "No server open.";
+  async #loadSounds() {
+    const serverId = this.voiceChannel?.server_id;
+    if (serverId === undefined) return;
+    const res = await this.#api(`/servers/${serverId}/sounds`);
+    if (res.ok && this.voiceChannel?.server_id === serverId) this.sounds = await res.json();
+  }
+
+  // Emotes go to the server on screen, sounds to the server of your call. Answers with an error to
+  // show, or "". The lists themselves update from the server's broadcast, which reaches this client too.
+  async addItem(library: Library, name: string, file: File): Promise<string> {
+    const serverId = this.#libraryServer(library);
+    if (serverId === undefined) return "No server open.";
     const form = new FormData();
     form.append("name", name);
     form.append("file", file);
-    return this.#emoteRequest(`/servers/${this.activeServer.id}/emotes`, { method: "POST", body: form });
+    return this.#libraryRequest(`/servers/${serverId}/${library}`, { method: "POST", body: form });
   }
 
-  async deleteEmote(emote: Emote): Promise<string> {
-    if (!this.activeServer) return "No server open.";
-    return this.#emoteRequest(`/servers/${this.activeServer.id}/emotes/${emote.id}`, { method: "DELETE" });
+  async removeItem(library: Library, item: ServerItem): Promise<string> {
+    const serverId = this.#libraryServer(library);
+    if (serverId === undefined) return "No server open.";
+    return this.#libraryRequest(`/servers/${serverId}/${library}/${item.id}`, { method: "DELETE" });
   }
 
-  // The list itself updates from the server's broadcast, which reaches this client too.
-  async #emoteRequest(path: string, init: RequestInit): Promise<string> {
+  canRemove(item: ServerItem) {
+    return !!this.me && (this.me.admin || this.me.id === item.created_by);
+  }
+
+  #libraryServer(library: Library) {
+    return library === "emotes" ? this.activeServer?.id : this.voiceChannel?.server_id;
+  }
+
+  async #libraryRequest(path: string, init: RequestInit): Promise<string> {
     try {
       const res = await this.#api(path, init, UPLOAD_TIMEOUT_MS);
       if (res.ok) return "";
-      if (res.status === 413) return "Emotes can be up to 512 KB.";
       return (await res.text()).trim() || `Failed (${res.status}).`;
     } catch {
       return "Can't reach the server.";
     }
   }
 
-  canDeleteEmote(emote: Emote) {
-    return !!this.me && (this.me.admin || this.me.id === emote.created_by);
+  // ── Soundboard ────────────────────────────────────────────
+
+  // Plays for everyone in the call, you included. One sound a second.
+  playSoundboard(sound: Sound) {
+    const r = this.room;
+    const me = String(this.me?.id);
+    if (!r || Date.now() - (this.#soundPlayed.get(me) ?? 0) < SOUND_COOLDOWN_MS) return;
+    this.#soundPlayed.set(me, Date.now());
+    const data = new TextEncoder().encode(JSON.stringify({ url: sound.url }));
+    r.localParticipant.publishData(data, { reliable: true, topic: SOUNDBOARD_TOPIC })
+      .catch((err) => console.warn("Couldn't play sound for the call:", err));
+    this.#hearSound(me, sound.url);
+  }
+
+  // Only your ears: to try a sound before playing it to everyone.
+  previewSound(sound: Sound) {
+    void playClip(sound.url, this.soundboardVolume);
+  }
+
+  setSoundboardVolume(volume: number) {
+    this.soundboardVolume = volume;
+    localStorage.setItem(SOUND_VOLUME_KEY, String(volume));
+  }
+
+  #hearSound(identity: string, url: string) {
+    if (this.voiceDeafened || this.userAudioFor(identity).muted) return;
+    void playClip(url, this.soundboardVolume);
+  }
+
+  // Someone in the call played a sound. Only the server's own uploads, and no faster than the button allows.
+  #onSoundboard(identity: string, payload: Uint8Array) {
+    let url: unknown;
+    try {
+      url = JSON.parse(new TextDecoder().decode(payload)).url;
+    } catch {
+      return;
+    }
+    if (typeof url !== "string" || !SOUND_URL.test(url)) return;
+    if (Date.now() - (this.#soundPlayed.get(identity) ?? 0) < SOUND_COOLDOWN_MS / 2) return;
+    this.#soundPlayed.set(identity, Date.now());
+    this.#hearSound(identity, url);
   }
 
   // An admin changed servers, channels or members: refetch what this user can see now.
@@ -639,13 +714,14 @@ class GumcordStore {
         | { type: "voice"; channels: Record<string, VoiceMember[]> }
         | { type: "online"; users: User[] }
         | { type: "servers" }
-        | { type: "emotes"; server_id: number };
+        | { type: Library; server_id: number };
       try { data = JSON.parse(e.data); } catch { return; }
       if ("type" in data) {
         if (data.type === "voice") this.#setVoiceRooms(data.channels);
         else if (data.type === "online") this.online = data.users;
         else if (data.type === "servers") void this.#refreshServers();
         else if (data.type === "emotes" && data.server_id === this.activeServer?.id) void this.#loadEmotes();
+        else if (data.type === "sounds" && data.server_id === this.voiceChannel?.server_id) void this.#loadSounds();
         return;
       }
       const msg = data;
@@ -864,6 +940,10 @@ class GumcordStore {
 
     r.on(RoomEvent.AudioPlaybackStatusChanged, () => this.#syncAudioPlayback(r));
 
+    r.on(RoomEvent.DataReceived, (payload, participant, _kind, topic) => {
+      if (topic === SOUNDBOARD_TOPIC && participant) this.#onSoundboard(participant.identity, payload);
+    });
+
     // Disconnects we didn't ask for (page unload, network drop) keep the saved session so a refresh rejoins.
     r.on(RoomEvent.Disconnected, (reason) => {
       // Our own leave plays its sound in leaveVoice; page unloads are client-initiated too and stay silent.
@@ -888,6 +968,7 @@ class GumcordStore {
     }
     this.room         = r;
     this.voiceChannel = ch;
+    void this.#loadSounds();
     for (const p of r.remoteParticipants.values()) {
       for (const pub of p.trackPublications.values()) this.#autoSubscribe(pub);
     }
@@ -971,6 +1052,8 @@ class GumcordStore {
     this.voiceParticipants = [];
     this.streams           = [];
     this.speaking          = new Set();
+    this.sounds            = [];
+    this.#soundPlayed.clear();
   }
 
   async toggleDeafen() {

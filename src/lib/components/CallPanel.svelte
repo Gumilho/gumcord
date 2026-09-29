@@ -8,6 +8,10 @@
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
+  import Soundboard from "$lib/components/Soundboard.svelte";
+
+  let soundboardBtn: HTMLButtonElement | null = $state(null);
+  let soundboardOpen = $state(false);
 
   const count = $derived(store.voiceParticipants.length + store.streams.length);
   const cols = $derived(count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
@@ -187,6 +191,19 @@
         >
           <Icon name="screenShare" size={24} />
         </button>
+        <button
+          class="ctrl"
+          aria-label="Soundboard"
+          aria-expanded={soundboardOpen}
+          use:tooltip={"Soundboard"}
+          bind:this={soundboardBtn}
+          onclick={() => (soundboardOpen = !soundboardOpen)}
+        >
+          <Icon name="soundboard" size={24} />
+        </button>
+        {#if soundboardOpen && soundboardBtn}
+          <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
+        {/if}
 
         <span class="divider" aria-hidden="true"></span>
 
