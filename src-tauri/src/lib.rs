@@ -1,6 +1,6 @@
 use tauri::utils::config::FrontendDist;
 use tauri::webview::{NewWindowResponse, PermissionKind, PermissionResponse};
-use tauri::WebviewWindowBuilder;
+use tauri::{AppHandle, Manager, WebviewWindowBuilder};
 
 // The desktop app is a window onto the Gumcord site (build.frontendDist). The site does all the
 // work, so app updates ship with the server and friends never need to reinstall.
@@ -8,6 +8,8 @@ use tauri::WebviewWindowBuilder;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![set_shortcuts])
         // Give calls what a browser tab gets once allowed; the OS still asks where it requires.
         .on_permission_request(|_, kind| match kind {
             PermissionKind::Microphone | PermissionKind::Camera | PermissionKind::DisplayCapture => {
@@ -77,4 +79,45 @@ fn enable_webrtc(window: &tauri::WebviewWindow) -> tauri::Result<()> {
         // The first page may have started loading before these settings applied; load it again with them.
         view.load_uri(url.as_str());
     })
+}
+
+#[derive(serde::Deserialize)]
+struct ShortcutBinding {
+    action: String,
+    accelerator: String,
+}
+
+// The site's mute, deafen and push-to-talk keys, taken system-wide so they work while a game has
+// focus. Presses go back to the site; returns the actions that got their key (another app may hold it).
+#[tauri::command]
+fn set_shortcuts(app: AppHandle, shortcuts: Vec<ShortcutBinding>) -> Result<Vec<String>, String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    // Wayland has no way for an app to take keys system-wide; the site keeps its in-window keys.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var("GDK_BACKEND").as_deref() != Ok("x11") {
+        return Err("system-wide shortcuts aren't available on Wayland".into());
+    }
+
+    let manager = app.global_shortcut();
+    manager.unregister_all().map_err(|e| e.to_string())?;
+    let mut registered = Vec::new();
+    for ShortcutBinding { action, accelerator } in shortcuts {
+        // The name goes back into the page as code: plain identifiers only.
+        if !action.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err(format!("bad action name {action:?}"));
+        }
+        let name = action.clone();
+        let result = manager.on_shortcut(accelerator.as_str(), move |app, _, event| {
+            let state = if event.state == ShortcutState::Pressed { "pressed" } else { "released" };
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.eval(format!("window.gumcordShortcut?.({name:?}, {state:?})"));
+            }
+        });
+        match result {
+            Ok(()) => registered.push(action),
+            Err(err) => eprintln!("shortcut {accelerator} for {action}: {err}"),
+        }
+    }
+    Ok(registered)
 }

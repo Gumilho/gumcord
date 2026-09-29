@@ -7,8 +7,12 @@
   import CallPanel from '$lib/components/CallPanel.svelte';
   import UserAudioMenu from '$lib/components/UserAudioMenu.svelte';
   import ServerRail from '$lib/components/ServerRail.svelte';
+  import { installShortcuts } from '$lib/shortcuts.svelte.ts';
 
-  onMount(() => store.boot());
+  onMount(() => {
+    void store.boot();
+    return installShortcuts();
+  });
   onDestroy(() => store.destroy());
 
   const SPLASH_MIN_MS = 1000;

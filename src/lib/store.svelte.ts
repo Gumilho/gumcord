@@ -46,6 +46,23 @@ export const isDesktop = "gumcordDesktop" in window;
 const SIGNED_OUT_KEY = "gc_signed_out";
 // Whether the member list is shown, remembered per device.
 const MEMBERS_KEY = "gc_members";
+// Keyboard shortcuts and push-to-talk, remembered per device.
+const KEYBINDS_KEY = "gc_keybinds";
+// A key plus the modifiers held with it. code is KeyboardEvent.code, e.g. "KeyM" or "F13".
+export interface Keybind { code: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean; }
+export type KeybindAction = "toggleMute" | "toggleDeafen" | "pushToTalk";
+export interface KeybindPrefs { pushToTalk: boolean; binds: Record<KeybindAction, Keybind | null>; }
+const DEFAULT_KEYBINDS: KeybindPrefs = {
+  pushToTalk: false,
+  binds: {
+    toggleMute:   { code: "KeyM", ctrl: true, shift: true, alt: false, meta: false },
+    toggleDeafen: { code: "KeyD", ctrl: true, shift: true, alt: false, meta: false },
+    pushToTalk:   null,
+  },
+};
+// Holding push-to-talk a moment after release keeps the ends of words.
+const PTT_RELEASE_MS = 150;
+
 // Chosen microphone and speakers, remembered per device. Missing means the system default.
 const DEVICES_KEY = "gc_devices";
 export type AudioDeviceKind = "audioinput" | "audiooutput";
@@ -93,6 +110,15 @@ const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
 const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
   a.length === b.length
   && a.every((s, i) => s.identity === b[i].identity && s.name === b[i].name && s.track === b[i].track && s.loading === b[i].loading);
+
+function loadKeybinds(): KeybindPrefs {
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEYBINDS_KEY) ?? "null");
+    return saved ? { ...DEFAULT_KEYBINDS, ...saved, binds: { ...DEFAULT_KEYBINDS.binds, ...saved.binds } } : DEFAULT_KEYBINDS;
+  } catch {
+    return DEFAULT_KEYBINDS;
+  }
+}
 
 function loadDevicePrefs(): DevicePrefs {
   try {
@@ -150,6 +176,9 @@ class GumcordStore {
   online:            User[]               = $state.raw([]);
   showMembers                             = $state(localStorage.getItem(MEMBERS_KEY) !== "0");
   devices:           DevicePrefs          = $state(loadDevicePrefs());
+  keybinds:          KeybindPrefs         = $state(loadKeybinds());
+  // While the settings dialog records a new key, shortcuts are off.
+  recordingKeybind                        = $state(false);
   // Who is in each voice channel (by channel ID), pushed by the server. Replaced wholesale on change.
   voiceRooms:        ReadonlyMap<number, VoiceMember[]> = $state.raw(new Map());
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
@@ -173,6 +202,9 @@ class GumcordStore {
   #wsRetryTimer: ReturnType<typeof setTimeout> | null = null;
   #audioEls:     Map<string, HTMLAudioElement> = new Map();
   #userAudioSaves = new Map<string, ReturnType<typeof setTimeout>>();
+  // Push-to-talk key held (or within the release delay).
+  #pttHeld = false;
+  #pttRelease: ReturnType<typeof setTimeout> | undefined;
   // The channel you just left, where you're hidden until the server's list catches up.
   #justLeft: { channelId: number; until: number } | null = null;
   // Joining voice waits for this, so nobody is heard at the default volume before their setting loads.
@@ -592,6 +624,33 @@ class GumcordStore {
     localStorage.setItem(DEVICES_KEY, JSON.stringify(this.devices));
     if (kind === "audiooutput") await setOutputDevice(deviceId);
     else await this.room?.switchActiveDevice(kind, deviceId).catch((err) => console.warn("Couldn't switch microphone:", err));
+    this.#applyPushToTalk(); // a new mic track starts enabled
+  }
+
+  setKeybinds(prefs: KeybindPrefs) {
+    this.keybinds = prefs;
+    localStorage.setItem(KEYBINDS_KEY, JSON.stringify(prefs));
+    this.#applyPushToTalk();
+  }
+
+  // Push-to-talk: the mic stays published and unmuted (so nobody sees a mute icon flicker); what
+  // it sends is silenced until the key is held. Muting yourself or deafening still wins.
+  pushToTalk(held: boolean) {
+    clearTimeout(this.#pttRelease);
+    if (held) {
+      this.#pttHeld = true;
+      this.#applyPushToTalk();
+    } else {
+      this.#pttRelease = setTimeout(() => {
+        this.#pttHeld = false;
+        this.#applyPushToTalk();
+      }, PTT_RELEASE_MS);
+    }
+  }
+
+  #applyPushToTalk() {
+    const track = this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    if (track) track.mediaStreamTrack.enabled = !this.keybinds.pushToTalk || this.#pttHeld;
   }
 
   toggleMembers() {
@@ -723,6 +782,7 @@ class GumcordStore {
     });
 
     r.on(RoomEvent.LocalTrackPublished, (pub, participant) => {
+      if (pub.source === Track.Source.Microphone) this.#applyPushToTalk();
       if (pub.source === Track.Source.Microphone && pub.track) {
         this.#speakingDetector.watch(participant.identity, pub.track.mediaStreamTrack);
       }
@@ -976,6 +1036,7 @@ class GumcordStore {
       await this.room.localParticipant.setMicrophoneEnabled(on);
       this.voiceMuted = !on;
       if (on) this.micBlocked = false;
+      this.#applyPushToTalk(); // unmuting re-enables the track
     } catch {
       this.micBlocked = true;
       this.voiceMuted = true;

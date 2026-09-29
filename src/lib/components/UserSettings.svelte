@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { store, type AudioDeviceKind } from "$lib/store.svelte.ts";
+  import { isDesktop, store, type AudioDeviceKind, type KeybindAction } from "$lib/store.svelte.ts";
+  import { keybindFromEvent, keybindLabel, systemWide } from "$lib/shortcuts.svelte.ts";
   import { canPickOutput } from "$lib/audio.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -33,6 +34,42 @@
     input.value = "";
     if (file) void run(store.setAvatar(file));
   }
+
+  // ── Keybinds ──
+  const KEYBIND_ROWS: { action: KeybindAction; label: string }[] = [
+    { action: "toggleMute", label: "Toggle mute" },
+    { action: "toggleDeafen", label: "Toggle deafen" },
+    { action: "pushToTalk", label: "Push to talk" },
+  ];
+  let recording: KeybindAction | null = $state(null);
+
+  function setBind(action: KeybindAction, bind: ReturnType<typeof keybindFromEvent>) {
+    store.setKeybinds({ ...store.keybinds, binds: { ...store.keybinds.binds, [action]: bind } });
+  }
+
+  function startRecording(action: KeybindAction) {
+    recording = action;
+    store.recordingKeybind = true;
+  }
+
+  function stopRecording() {
+    recording = null;
+    store.recordingKeybind = false;
+  }
+
+  // Captures the next key for the row being changed; Escape cancels.
+  function onRecordKey(e: KeyboardEvent) {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") return stopRecording();
+    const bind = keybindFromEvent(e);
+    if (!bind) return; // a lone modifier: wait for the key
+    setBind(recording, bind);
+    stopRecording();
+  }
+
+  onMount(() => stopRecording); // never leave shortcuts paused
 
   // ── Voice ──
   let devices: MediaDeviceInfo[] = $state([]);
@@ -77,7 +114,9 @@
   }
 </script>
 
-<Modal title="User settings" {onclose}>
+<svelte:window onkeydowncapture={onRecordKey} />
+
+<Modal title="User settings" onclose={() => (recording ? stopRecording() : onclose())}>
   <section>
     <h3>Profile</h3>
     <div class="profile">
@@ -97,6 +136,37 @@
     </form>
     <button class="link" type="button" disabled={busy} onclick={() => run(store.updateName(""))}>Use my PocketID name</button>
     {#if profileError}<p class="error">{profileError}</p>{/if}
+  </section>
+
+  <section>
+    <h3>Keybinds</h3>
+    <div class="modes" role="radiogroup" aria-label="Input mode">
+      <label><input type="radio" name="mode" checked={!store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: false })} /> Voice activity</label>
+      <label><input type="radio" name="mode" checked={store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: true })} /> Push to talk</label>
+    </div>
+    {#if store.keybinds.pushToTalk && !store.keybinds.binds.pushToTalk}
+      <p class="error">Pick a push-to-talk key below: until then your microphone stays silent.</p>
+    {/if}
+    <ul class="binds">
+      {#each KEYBIND_ROWS as row (row.action)}
+        {@const bind = store.keybinds.binds[row.action]}
+        <li>
+          <span class="bind-name">{row.label}</span>
+          <kbd class:recording={recording === row.action}>
+            {recording === row.action ? "Press a key…" : bind ? keybindLabel(bind) : "Not set"}
+          </kbd>
+          <button class="link" type="button" onclick={() => startRecording(row.action)}>Change</button>
+          {#if bind}<button class="link" type="button" onclick={() => setBind(row.action, null)}>Clear</button>{/if}
+        </li>
+      {/each}
+    </ul>
+    <p class="hint">
+      {systemWide.on
+        ? "These also work while another app is in front. The app takes over the key everywhere, so for push-to-talk pick one you don't type with (like F13 or a Ctrl combination)."
+        : isDesktop
+          ? "These work while Gumcord is focused: this system doesn't let apps take keys system-wide (Wayland)."
+          : "In the browser these work while Gumcord's tab is focused; the desktop app also takes them system-wide."}
+    </p>
   </section>
 
   <section>
@@ -143,6 +213,59 @@
     margin-top: 20px;
     padding-top: 20px;
     border-top: 1px solid #2e3154;
+  }
+
+  .modes {
+    display: flex;
+    gap: 20px;
+    color: #c8cce8;
+    font-size: 14px;
+  }
+
+  .modes label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+  }
+
+  .modes input { accent-color: #5b40c2; }
+
+  .binds {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .binds li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bind-name {
+    flex: 1;
+    color: #c8cce8;
+    font-size: 14px;
+  }
+
+  kbd {
+    min-width: 110px;
+    padding: 4px 8px;
+    border: 1px solid #33365a;
+    border-radius: 5px;
+    background: #1a1b2e;
+    color: #e4e6f5;
+    font: 600 12px ui-monospace, monospace;
+    text-align: center;
+  }
+
+  kbd.recording {
+    border-color: #7c5cbf;
+    color: #a78bfa;
   }
 
   .profile {
