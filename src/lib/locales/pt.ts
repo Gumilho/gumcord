@@ -36,6 +36,7 @@ export const pt: Record<string, string> = {
   "Can't reach the server.": "Não foi possível acessar o servidor.",
   "File too large (max 25 MB).": "Arquivo grande demais (máx. 25 MB).",
   "Upload failed.": "Falha no envio.",
+  "Too many uploads at once. Try again in a moment.": "Muitos envios de uma vez. Tente de novo em instantes.",
   // from the server
   "no file": "nenhum arquivo",
   "names can be up to 32 characters": "os nomes podem ter até 32 caracteres",

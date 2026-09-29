@@ -696,7 +696,8 @@ class GumcordStore {
       form.append("file", file);
       const res = await this.#api("/upload", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
       if (!res.ok) {
-        this.uploadError = t(res.status === 413 ? "File too large (max 25 MB)." : "Upload failed.");
+        this.uploadError = t(res.status === 413 ? "File too large (max 25 MB)."
+          : res.status === 429 ? "Too many uploads at once. Try again in a moment." : "Upload failed.");
         return;
       }
       this.pendingAttachment = await res.json();

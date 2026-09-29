@@ -104,6 +104,15 @@
     if (file) store.uploadFile(file);
   }
 
+  // Pasting a file (a screenshot, a picture copied from a page, a file copied from a folder)
+  // attaches it, like the + button. Text pastes as usual.
+  function onPaste(e: ClipboardEvent) {
+    const file = e.clipboardData?.files[0];
+    if (!file) return;
+    e.preventDefault();
+    if (!store.uploading) void store.uploadFile(file);
+  }
+
   function fileName(url: string) {
     return url.split("/").pop() ?? url;
   }
@@ -344,6 +353,7 @@
               placeholder={t("Message #{channel}", { channel: store.activeChannel.name })}
               aria-label={t("Message #{channel}", { channel: store.activeChannel.name })}
               onkeydown={onInputKeydown}
+              onpaste={onPaste}
               oninput={() => { trackCaret(); highlighted = 0; }}
               onkeyup={trackCaret}
               onclick={trackCaret}
