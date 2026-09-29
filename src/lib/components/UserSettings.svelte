@@ -3,6 +3,7 @@
   import { isDesktop, store, type AudioDeviceKind, type KeybindAction } from "$lib/store.svelte.ts";
   import { keybindFromEvent, keybindLabel, systemWide } from "$lib/shortcuts.svelte.ts";
   import { i18n, LANGUAGES, setLang, t, type Lang } from "$lib/i18n.svelte.ts";
+  import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
   import { canPickOutput } from "$lib/audio.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -29,10 +30,8 @@
     if (name.trim()) void run(store.updateName(name.trim()));
   }
 
-  function pickPhoto(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
+  // A picture chosen with "Change photo", or pasted while the settings are open.
+  function usePhoto(file: File | null) {
     if (file) void run(store.setAvatar(file));
   }
 
@@ -115,7 +114,7 @@
   }
 </script>
 
-<svelte:window onkeydowncapture={onRecordKey} />
+<svelte:window onkeydowncapture={onRecordKey} onpaste={(e) => usePhoto(pastedFile(e, isImage))} />
 
 <Modal title={t("User settings")} onclose={() => (recording ? stopRecording() : onclose())}>
   <section>
@@ -123,9 +122,10 @@
     <div class="profile">
       <div class="big-avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
       <div class="photo-actions">
-        <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={photoInput} onchange={pickPhoto} />
+        <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={photoInput} onchange={(e) => usePhoto(chosenFile(e))} />
         <button class="primary" type="button" disabled={busy} onclick={() => photoInput?.click()}>{t("Change photo")}</button>
         <button class="link" type="button" disabled={busy} onclick={() => run(store.resetAvatar())}>{t("Use my PocketID photo")}</button>
+        <span class="hint">{t("or paste a picture")}</span>
       </div>
     </div>
     <form class="row" onsubmit={saveName}>

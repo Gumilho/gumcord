@@ -3,6 +3,7 @@
   import { store, type Emote, type ServerItem } from "$lib/store.svelte.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { t } from "$lib/i18n.svelte.ts";
+  import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
 
   // The open server's emotes and stickers, above the message box: pick one (a sticker is sent right
   // away), add your own, or remove one you added.
@@ -40,10 +41,8 @@
     stopAdding();
   }
 
-  function pickFile(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
+  // A picture chosen with "Add" or pasted, ready to name and save on the open tab.
+  function startAdding(file: File | null) {
     if (!file) return;
     stopAdding();
     adding = { file, preview: URL.createObjectURL(file) };
@@ -93,7 +92,11 @@
   onDestroy(stopAdding);
 </script>
 
-<svelte:window onpointerdown={onPointerDown} onkeydown={(e) => { if (e.key === "Escape") onclose(); }} />
+<svelte:window
+  onpointerdown={onPointerDown}
+  onkeydown={(e) => { if (e.key === "Escape") onclose(); }}
+  onpaste={(e) => startAdding(pastedFile(e, isImage))}
+/>
 
 <div class="picker" role="dialog" aria-label={t("Emotes and stickers")} bind:this={picker}>
   <div class="tabs" role="tablist">
@@ -103,7 +106,7 @@
 
   <div class="top">
     <input class="search" placeholder={t(emotes ? "Find an emote" : "Find a sticker")} aria-label={t(emotes ? "Find an emote" : "Find a sticker")} bind:value={search} {@attach focusSearch} />
-    <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" bind:this={fileInput} onchange={pickFile} />
+    <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" bind:this={fileInput} onchange={(e) => startAdding(chosenFile(e))} />
     <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t(emotes ? "Add emote" : "Add sticker")}</button>
   </div>
 
@@ -146,7 +149,10 @@
       {/each}
     </div>
   {/if}
-  <p class="hint">{t(emotes ? "Type :name: in a message, or start with : to search. Shift-click to pick several." : "Click a sticker to send it. Shift-click to send several.")}</p>
+  <p class="hint">
+    {t(emotes ? "Type :name: in a message, or start with : to search. Shift-click to pick several." : "Click a sticker to send it. Shift-click to send several.")}
+    {t(emotes ? "Paste a picture to add it as an emote." : "Paste a picture to add it as a sticker.")}
+  </p>
 </div>
 
 <style>

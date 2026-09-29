@@ -4,6 +4,7 @@
   import { clipDuration, MAX_CLIP_SECONDS, playClip } from "$lib/sounds.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { t } from "$lib/i18n.svelte.ts";
+  import { chosenFile, isAudio, pastedFile } from "$lib/files.ts";
 
   // The call's soundboard, over the button that opened it: play a sound to everyone, try one on
   // your own, add your own, or remove one you added.
@@ -42,10 +43,8 @@
     return file.name.replace(/\.[^.]*$/, "").replace(/[-_]+/g, " ").trim().slice(0, 32);
   }
 
-  async function pickFile(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
+  // A sound chosen with "Add sound" or pasted (a file copied from a folder), ready to name and save.
+  async function startAdding(file: File | null) {
     if (!file) return;
     stopAdding();
     const seconds = await clipDuration(file);
@@ -96,12 +95,17 @@
   });
 </script>
 
-<svelte:window onpointerdown={onPointerDown} onresize={place} onkeydown={(e) => { if (e.key === "Escape") onclose(); }} />
+<svelte:window
+  onpointerdown={onPointerDown}
+  onresize={place}
+  onkeydown={(e) => { if (e.key === "Escape") onclose(); }}
+  onpaste={(e) => void startAdding(pastedFile(e, isAudio))}
+/>
 
 <div class="soundboard" role="dialog" aria-label={t("Soundboard")} bind:this={panel} style:left="{pos.left}px" style:bottom="{pos.bottom}px" style:width="{WIDTH}px">
   <div class="top">
     <h3>{t("Soundboard")} <span>{store.voiceServer?.name ?? ""}</span></h3>
-    <input type="file" hidden accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" bind:this={fileInput} onchange={pickFile} />
+    <input type="file" hidden accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" bind:this={fileInput} onchange={(e) => startAdding(chosenFile(e))} />
     <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t("Add sound")}</button>
   </div>
 

@@ -5,6 +5,7 @@
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
   import { hue, initials } from "$lib/avatar.ts";
+  import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
 
   // Admins only: rename a server, add and remove its members, or delete it.
   let { server, onclose }: { server: Server; onclose: () => void } = $props();
@@ -32,10 +33,8 @@
 
   let iconInput: HTMLInputElement | null = $state(null);
 
-  function pickIcon(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
+  // A picture chosen with "Change image", or pasted while the settings are open.
+  function useIcon(file: File | null) {
     if (file) void run(store.setServerIcon(server.id, file));
   }
 
@@ -57,17 +56,20 @@
   }
 </script>
 
+<svelte:window onpaste={(e) => useIcon(pastedFile(e, isImage))} />
+
 <Modal title={t("Server settings")} {onclose}>
   <div class="icon-row">
     <div class="server-icon" style="--hue: {hue(server.name)}">
       <UserAvatar name={server.name} src={server.icon} letters={initials(server.name)} />
     </div>
     <div class="icon-actions">
-      <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" bind:this={iconInput} onchange={pickIcon} />
+      <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" bind:this={iconInput} onchange={(e) => useIcon(chosenFile(e))} />
       <button class="primary" type="button" onclick={() => iconInput?.click()}>{t("Change image")}</button>
       {#if server.icon}
         <button class="link" type="button" onclick={() => run(store.removeServerIcon(server.id))}>{t("Remove image")}</button>
       {/if}
+      <span class="hint">{t("or paste a picture")}</span>
     </div>
   </div>
 

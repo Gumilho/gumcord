@@ -8,6 +8,7 @@
   import MessageContent from "$lib/components/MessageContent.svelte";
   import EmotePicker from "$lib/components/EmotePicker.svelte";
   import BackButton from "$lib/components/BackButton.svelte";
+  import { chosenFile, pastedFile } from "$lib/files.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
   let msgEnd: HTMLDivElement | null = $state(null);
@@ -97,21 +98,10 @@
     }
   }
 
-  function onFilePicked(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = "";
-    if (file) store.uploadFile(file);
+  function attach(file: File | null) {
+    if (file && !store.uploading) void store.uploadFile(file);
   }
 
-  // Pasting a file (a screenshot, a picture copied from a page, a file copied from a folder)
-  // attaches it, like the + button. Text pastes as usual.
-  function onPaste(e: ClipboardEvent) {
-    const file = e.clipboardData?.files[0];
-    if (!file) return;
-    e.preventDefault();
-    if (!store.uploading) void store.uploadFile(file);
-  }
 
   function fileName(url: string) {
     return url.split("/").pop() ?? url;
@@ -334,7 +324,7 @@
           {/if}
 
           <div class="inner">
-            <input type="file" hidden bind:this={fileInput} onchange={onFilePicked} />
+            <input type="file" hidden bind:this={fileInput} onchange={(e) => attach(chosenFile(e))} />
             <button
               class="attach-btn"
               type="button"
@@ -353,7 +343,7 @@
               placeholder={t("Message #{channel}", { channel: store.activeChannel.name })}
               aria-label={t("Message #{channel}", { channel: store.activeChannel.name })}
               onkeydown={onInputKeydown}
-              onpaste={onPaste}
+              onpaste={(e) => attach(pastedFile(e))}
               oninput={() => { trackCaret(); highlighted = 0; }}
               onkeyup={trackCaret}
               onclick={trackCaret}
