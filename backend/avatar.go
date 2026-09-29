@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -42,21 +43,35 @@ func importAvatar(ctx context.Context, pictureURL string) string {
 	if err != nil || len(data) > maxAvatarSize {
 		return ""
 	}
-	ext, ok := imageExts[http.DetectContentType(data)]
-	if !ok {
+	url, err := saveImage("avatar", data)
+	if err != nil {
+		if err != errNotImage {
+			log.Printf("avatar import: %v", err)
+		}
 		return ""
 	}
+	return url
+}
 
+var errNotImage = errors.New("use a PNG, JPEG, GIF, WebP or BMP picture")
+
+// saveImage stores a picture in the upload store and returns its URL. Files are named by content
+// (an unchanged picture keeps its URL, and its browser cache) under the extension of the sniffed
+// type, so nothing but a picture is ever served as one.
+func saveImage(prefix string, data []byte) (string, error) {
+	ext, ok := imageExts[http.DetectContentType(data)]
+	if !ok {
+		return "", errNotImage
+	}
 	sum := sha256.Sum256(data)
-	name := "avatar-" + hex.EncodeToString(sum[:12]) + ext
+	name := prefix + "-" + hex.EncodeToString(sum[:12]) + ext
 	file := filepath.Join(uploadDir, name)
 	if _, err := os.Stat(file); err != nil {
 		if err := os.WriteFile(file, data, 0o644); err != nil {
-			log.Printf("avatar import: %v", err)
-			return ""
+			return "", err
 		}
 	}
-	return "/files/" + name
+	return "/files/" + name, nil
 }
 
 func sameHost(a, b string) bool {

@@ -1,21 +1,22 @@
 <script lang="ts">
-  import { parseMessage, previewLinks } from "$lib/richtext.ts";
+  import { onlyEmotes, parseMessage, previewLinks } from "$lib/richtext.ts";
   import { getEmbed } from "$lib/embeds.ts";
+  import { store } from "$lib/store.svelte.ts";
 
-  // A message's text with its links clickable, and previews of them underneath.
+  // A message's text with its links clickable and emotes shown, and link previews underneath.
   let { content, onresize, onview }: {
     content: string;
     onresize: () => void; // a preview appeared or its picture loaded: the chat grew
     onview: (src: string) => void; // open a picture in the viewer
   } = $props();
 
-  const pieces = $derived(parseMessage(content));
+  const pieces = $derived(parseMessage(content, store.emoteMap));
   const previews = $derived(previewLinks(pieces));
 </script>
 
 {#if content}
   <!-- On one line: the text keeps its own spacing (pre-wrap). -->
-  <p class="msg-content">{#each pieces as p, i (i)}{#if p.kind === "text"}{p.text}{:else}<a href={p.url} target="_blank" rel="noreferrer noopener">{p.url}</a>{/if}{/each}</p>
+  <p class="msg-content" class:jumbo={onlyEmotes(pieces)}>{#each pieces as p, i (i)}{#if p.kind === "text"}{p.text}{:else if p.kind === "emote"}<img class="emote" src={p.emote.url} alt=":{p.emote.name}:" title=":{p.emote.name}:" />{:else}<a href={p.url} target="_blank" rel="noreferrer noopener">{p.url}</a>{/if}{/each}</p>
 {/if}
 
 {#each previews as url (url)}
@@ -48,6 +49,20 @@
     line-height: 1.5;
     word-break: break-word;
     white-space: pre-wrap;
+  }
+
+  .emote {
+    width: 22px;
+    height: 22px;
+    margin: -2px 1px 0;
+    object-fit: contain;
+    vertical-align: middle;
+  }
+
+  .jumbo .emote {
+    width: 48px;
+    height: 48px;
+    margin: 2px 2px 0 0;
   }
 
   .msg-content a {

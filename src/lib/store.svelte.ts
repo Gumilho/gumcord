@@ -17,6 +17,8 @@ interface Message {
 }
 interface Attachment { url: string; type: AttachmentType; name: string; }
 export interface User { id: number; name: string; avatar: string; admin: boolean; }
+// A server's own picture, written :name: in messages.
+export interface Emote { id: number; name: string; url: string; created_by: number; }
 // identity is the stable user ID; name is the display name to show.
 export interface VoiceParticipant { identity: string; name: string; avatar: string; muted: boolean; deafened: boolean; }
 // Someone in a voice channel as the server reports it, for channels you aren't in yourself.
@@ -144,6 +146,9 @@ class GumcordStore {
   servers:       Server[]       = $state([]);
   activeServer:  Server | null  = $state(null);
   members:       User[]         = $state.raw([]);
+  emotes:        Emote[]        = $state.raw([]);
+  // By lowercase name: :Kappa: and :kappa: are one emote.
+  emoteMap = $derived(new Map(this.emotes.map((e) => [e.name.toLowerCase(), e])));
 
   // channels + messages
   channels:      Channel[]      = $state([]);
@@ -372,13 +377,15 @@ class GumcordStore {
 
   // Loads a server's channels and members, staying on the open text channel if it's still there.
   async #loadServer(server: Server) {
-    const [channels, members] = await Promise.all([
+    const [channels, members, emotes] = await Promise.all([
       this.#api(`/servers/${server.id}/channels`),
       this.#api(`/servers/${server.id}/members`),
+      this.#api(`/servers/${server.id}/emotes`),
     ]);
     if (this.activeServer?.id !== server.id) return; // switched to another server meanwhile
     this.channels = channels.ok ? await channels.json() : [];
     this.members  = members.ok ? await members.json() : [];
+    this.emotes   = emotes.ok ? await emotes.json() : [];
 
     const current = this.channels.find((c) => c.id === this.activeChannel?.id);
     if (current) {
@@ -396,6 +403,43 @@ class GumcordStore {
     }
   }
 
+  async #loadEmotes() {
+    const server = this.activeServer;
+    if (!server) return;
+    const res = await this.#api(`/servers/${server.id}/emotes`);
+    if (res.ok && this.activeServer?.id === server.id) this.emotes = await res.json();
+  }
+
+  // Adds an emote to the open server; answers with an error to show, or "".
+  async addEmote(name: string, file: File): Promise<string> {
+    if (!this.activeServer) return "No server open.";
+    const form = new FormData();
+    form.append("name", name);
+    form.append("file", file);
+    return this.#emoteRequest(`/servers/${this.activeServer.id}/emotes`, { method: "POST", body: form });
+  }
+
+  async deleteEmote(emote: Emote): Promise<string> {
+    if (!this.activeServer) return "No server open.";
+    return this.#emoteRequest(`/servers/${this.activeServer.id}/emotes/${emote.id}`, { method: "DELETE" });
+  }
+
+  // The list itself updates from the server's broadcast, which reaches this client too.
+  async #emoteRequest(path: string, init: RequestInit): Promise<string> {
+    try {
+      const res = await this.#api(path, init, UPLOAD_TIMEOUT_MS);
+      if (res.ok) return "";
+      if (res.status === 413) return "Emotes can be up to 512 KB.";
+      return (await res.text()).trim() || `Failed (${res.status}).`;
+    } catch {
+      return "Can't reach the server.";
+    }
+  }
+
+  canDeleteEmote(emote: Emote) {
+    return !!this.me && (this.me.admin || this.me.id === emote.created_by);
+  }
+
   // An admin changed servers, channels or members: refetch what this user can see now.
   async #refreshServers() {
     const res = await this.#api("/servers");
@@ -411,6 +455,7 @@ class GumcordStore {
       this.activeServer  = null;
       this.channels      = [];
       this.members       = [];
+      this.emotes        = [];
       this.activeChannel = null;
       this.messages      = [];
     }
@@ -593,12 +638,14 @@ class GumcordStore {
       let data: Message
         | { type: "voice"; channels: Record<string, VoiceMember[]> }
         | { type: "online"; users: User[] }
-        | { type: "servers" };
+        | { type: "servers" }
+        | { type: "emotes"; server_id: number };
       try { data = JSON.parse(e.data); } catch { return; }
       if ("type" in data) {
         if (data.type === "voice") this.#setVoiceRooms(data.channels);
         else if (data.type === "online") this.online = data.users;
         else if (data.type === "servers") void this.#refreshServers();
+        else if (data.type === "emotes" && data.server_id === this.activeServer?.id) void this.#loadEmotes();
         return;
       }
       const msg = data;

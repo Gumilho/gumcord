@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { tick } from "svelte";
+  import { store, type Emote } from "$lib/store.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
   import MessageContent from "$lib/components/MessageContent.svelte";
+  import EmotePicker from "$lib/components/EmotePicker.svelte";
 
   let msgEnd: HTMLDivElement | null = $state(null);
   // Updated on scroll only; content growing (an image loading) fires no scroll event,
@@ -22,7 +24,62 @@
     textarea.style.height = `${textarea.scrollHeight}px`;
   });
 
+  // ── Emotes: the picker, and suggestions while typing :name ──
+  let pickerOpen = $state(false);
+  let caret = $state(0);
+  let highlighted = $state(0);
+  let dismissed = $state(""); // the search closed with Escape
+
+  const emoteSearch = $derived(/(?:^|\s):([A-Za-z0-9_]{2,32})$/.exec(store.draft.slice(0, caret))?.[1] ?? "");
+  const suggestions = $derived.by(() => {
+    const q = emoteSearch.toLowerCase();
+    if (!q || emoteSearch === dismissed) return [];
+    const matches = store.emotes.filter((e) => e.name.toLowerCase().includes(q));
+    const starts = (e: Emote) => (e.name.toLowerCase().startsWith(q) ? 0 : 1);
+    return matches.sort((a, b) => starts(a) - starts(b)).slice(0, 8);
+  });
+
+  function trackCaret() {
+    caret = textarea?.selectionStart ?? 0;
+  }
+
+  // Puts :name: at the caret, replacing the typed search (and its colon) when there is one.
+  async function insertEmote(emote: Emote, replace = 0) {
+    const el = textarea;
+    if (!el) return;
+    const before = store.draft.slice(0, el.selectionStart - replace);
+    const text = `${before && !/\s$/.test(before) ? " " : ""}:${emote.name}: `;
+    store.draft = before + text + store.draft.slice(el.selectionEnd);
+    const at = before.length + text.length;
+    await tick();
+    el.focus();
+    el.setSelectionRange(at, at);
+    caret = at;
+  }
+
+  function pickEmote(emote: Emote, keepOpen: boolean) {
+    void insertEmote(emote);
+    if (!keepOpen) pickerOpen = false;
+  }
+
+  // Arrows, Enter/Tab and Escape work the suggestions while they're up.
+  function onSuggestionKey(e: KeyboardEvent) {
+    const n = suggestions.length;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      highlighted = (highlighted + (e.key === "ArrowDown" ? 1 : n - 1)) % n;
+    } else if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+      void insertEmote(suggestions[Math.min(highlighted, n - 1)], emoteSearch.length + 1);
+    } else if (e.key === "Escape") {
+      dismissed = emoteSearch;
+    } else {
+      return false;
+    }
+    e.preventDefault();
+    return true;
+  }
+
   function onInputKeydown(e: KeyboardEvent) {
+    if (suggestions.length && !e.isComposing && onSuggestionKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
       if (!store.uploading) store.sendMessage();
@@ -165,9 +222,38 @@
               placeholder="Message #{store.activeChannel.name}"
               aria-label="Message #{store.activeChannel.name}"
               onkeydown={onInputKeydown}
+              oninput={() => { trackCaret(); highlighted = 0; }}
+              onkeyup={trackCaret}
+              onclick={trackCaret}
             ></textarea>
+            <button
+              class="attach-btn emote-btn"
+              type="button"
+              aria-label="Emotes"
+              aria-expanded={pickerOpen}
+              use:tooltip={"Emotes"}
+              onclick={() => (pickerOpen = !pickerOpen)}
+            >
+              <Icon name="smile" />
+            </button>
           </div>
         </div>
+        {#if suggestions.length}
+          <ul class="suggestions" role="listbox" aria-label="Emotes matching :{emoteSearch}">
+            {#each suggestions as emote, i (emote.id)}
+              <li role="option" aria-selected={i === Math.min(highlighted, suggestions.length - 1)}>
+                <!-- mousedown keeps the focus (and caret) in the message box -->
+                <button type="button" tabindex="-1" onmousedown={(e) => e.preventDefault()} onmouseenter={() => (highlighted = i)} onclick={() => insertEmote(emote, emoteSearch.length + 1)}>
+                  <img src={emote.url} alt="" />
+                  :{emote.name}:
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if pickerOpen}
+          <EmotePicker onpick={pickEmote} onclose={() => (pickerOpen = false)} />
+        {/if}
       </div>
     </div>
     {#if store.showMembers}
@@ -268,8 +354,50 @@
 
   /* ── Chat input (Discord layout) ── */
   .chat-form {
+    position: relative;
     padding: 0 16px 24px;
     flex-shrink: 0;
+  }
+
+  .emote-btn { margin: 0 12px 0 0; }
+
+  .suggestions {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: calc(100% - 16px);
+    z-index: 40;
+    margin: 0;
+    padding: 6px;
+    list-style: none;
+    border: 1px solid #2e3154;
+    border-radius: 8px;
+    background: #1a1b2e;
+    box-shadow: 0 8px 24px #0008;
+  }
+
+  .suggestions button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 5px;
+    background: none;
+    color: #c8cce8;
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .suggestions [aria-selected="true"] button { background: #2a2c48; color: #fff; }
+
+  .suggestions img {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
   }
 
   .text-area {
