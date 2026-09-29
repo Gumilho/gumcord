@@ -20,8 +20,12 @@ export const tooltip: Action<HTMLElement, string> = (node, initial) => {
       Math.max(margin, r.left + r.width / 2 - t.width / 2),
       window.innerWidth - t.width - margin,
     );
+    // Above, unless that runs off the top of the window (buttons in the header bar): then below.
+    const above = r.top - t.height - 8;
+    const below = above < margin;
+    tip.classList.toggle("below", below);
     tip.style.left = `${left}px`;
-    tip.style.top = `${r.top - t.height - 8}px`;
+    tip.style.top = `${below ? r.bottom + 8 : above}px`;
     tip.style.setProperty("--arrow-x", `${r.left + r.width / 2 - left}px`);
   }
 
