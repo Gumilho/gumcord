@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -27,8 +28,8 @@
   });
 </script>
 
-<aside class="members" aria-label="Online members">
-  <h2 class="heading">Online — {online.length}</h2>
+<aside class="members" aria-label={t("Online members")}>
+  <h2 class="heading">{t("Online — {count}", { count: online.length })}</h2>
   <ul>
     {#each online as u (u.id)}
       {@const inVoice = voiceChannelOf.get(String(u.id))}
@@ -39,7 +40,7 @@
         </div>
         <span class="name">{u.name}</span>
         {#if inVoice}
-          <span class="in-voice" role="img" aria-label="In {inVoice}" use:tooltip={`In ${inVoice}`}>
+          <span class="in-voice" role="img" aria-label={t("In {channel}", { channel: inVoice })} use:tooltip={t("In {channel}", { channel: inVoice })}>
             <Icon name="speaker" size={16} />
           </span>
         {/if}

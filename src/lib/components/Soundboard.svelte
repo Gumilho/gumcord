@@ -3,6 +3,7 @@
   import { store, type Sound } from "$lib/store.svelte.ts";
   import { clipDuration, MAX_CLIP_SECONDS, playClip } from "$lib/sounds.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import { t } from "$lib/i18n.svelte.ts";
 
   // The call's soundboard, over the button that opened it: play a sound to everyone, try one on
   // your own, add your own, or remove one you added.
@@ -49,11 +50,11 @@
     stopAdding();
     const seconds = await clipDuration(file);
     if (seconds === null) {
-      error = "That file isn't a sound this app can play. Use an MP3, OGG or WAV.";
+      error = t("That file isn't a sound this app can play. Use an MP3, OGG or WAV.");
       return;
     }
     if (seconds > MAX_CLIP_SECONDS) {
-      error = `Sounds can be up to ${MAX_CLIP_SECONDS} seconds; this one is ${seconds.toFixed(1)}.`;
+      error = t("Sounds can be up to {max} seconds; this one is {length}.", { max: MAX_CLIP_SECONDS, length: seconds.toFixed(1) });
       return;
     }
     adding = { file, url: URL.createObjectURL(file) };
@@ -97,34 +98,34 @@
 
 <svelte:window onpointerdown={onPointerDown} onresize={place} onkeydown={(e) => { if (e.key === "Escape") onclose(); }} />
 
-<div class="soundboard" role="dialog" aria-label="Soundboard" bind:this={panel} style:left="{pos.left}px" style:bottom="{pos.bottom}px" style:width="{WIDTH}px">
+<div class="soundboard" role="dialog" aria-label={t("Soundboard")} bind:this={panel} style:left="{pos.left}px" style:bottom="{pos.bottom}px" style:width="{WIDTH}px">
   <div class="top">
-    <h3>Soundboard <span>{store.voiceServer?.name ?? ""}</span></h3>
+    <h3>{t("Soundboard")} <span>{store.voiceServer?.name ?? ""}</span></h3>
     <input type="file" hidden accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" bind:this={fileInput} onchange={pickFile} />
-    <button class="add-btn" type="button" onclick={() => fileInput?.click()}>Add sound</button>
+    <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t("Add sound")}</button>
   </div>
 
   {#if adding}
     <form class="adding" onsubmit={save}>
-      <button class="icon" type="button" aria-label="Listen" title="Listen" onclick={() => adding && playClip(adding.url, store.soundboardVolume)}>
+      <button class="icon" type="button" aria-label={t("Listen")} title={t("Listen")} onclick={() => adding && playClip(adding.url, store.soundboardVolume)}>
         <Icon name="speaker" size={16} />
       </button>
-      <input bind:value={newName} maxlength="32" placeholder="name" aria-label="Sound name" />
-      <button class="primary" type="submit" disabled={busy || !newName.trim()}>Save</button>
-      <button class="cancel" type="button" onclick={stopAdding}>Cancel</button>
+      <input bind:value={newName} maxlength="32" placeholder={t("name")} aria-label={t("Sound name")} />
+      <button class="primary" type="submit" disabled={busy || !newName.trim()}>{t("Save")}</button>
+      <button class="cancel" type="button" onclick={stopAdding}>{t("Cancel")}</button>
     </form>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
-  {#if store.voiceDeafened}<p class="note">You're deafened: you won't hear sounds, but others will.</p>{/if}
+  {#if store.voiceDeafened}<p class="note">{t("You're deafened: you won't hear sounds, but others will.")}</p>{/if}
 
   {#if store.sounds.length === 0}
-    <p class="empty">No sounds in {store.voiceServer?.name ?? "this server"} yet. Add the first one!</p>
+    <p class="empty">{t("No sounds in {server} yet. Add the first one!", { server: store.voiceServer?.name ?? t("this server") })}</p>
   {:else}
     <div class="grid">
       {#each store.sounds as sound (sound.id)}
         <div class="tile" class:played={played === sound.id}>
-          <button class="play" type="button" title="Play for everyone in the call" onclick={() => play(sound)}>{sound.name}</button>
-          <button class="icon preview" type="button" aria-label="Listen to {sound.name}" title="Only you hear it" onclick={() => store.previewSound(sound)}>
+          <button class="play" type="button" title={t("Play for everyone in the call")} onclick={() => play(sound)}>{sound.name}</button>
+          <button class="icon preview" type="button" aria-label={t("Listen to {name}", { name: sound.name })} title={t("Only you hear it")} onclick={() => store.previewSound(sound)}>
             <Icon name="speaker" size={14} />
           </button>
           {#if store.canRemove(sound)}
@@ -132,8 +133,8 @@
               class="icon remove"
               class:confirming={confirming === sound.id}
               type="button"
-              aria-label="Remove {sound.name}"
-              title={confirming === sound.id ? "Click again to remove" : `Remove ${sound.name}`}
+              aria-label={t("Remove {name}", { name: sound.name })}
+              title={confirming === sound.id ? t("Click again to remove") : t("Remove {name}", { name: sound.name })}
               onclick={() => remove(sound)}
             >
               <Icon name="close" size={12} />
@@ -145,7 +146,7 @@
   {/if}
 
   <label class="volume">
-    <span>Volume</span>
+    <span>{t("Volume")}</span>
     <input
       type="range"
       min="0"

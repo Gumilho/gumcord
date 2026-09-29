@@ -2,6 +2,7 @@
   import { onDestroy } from "svelte";
   import { store, type Emote } from "$lib/store.svelte.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import { t } from "$lib/i18n.svelte.ts";
 
   // The open server's emotes, above the message box: pick one, add your own, or remove one you added.
   let { onpick, onclose }: { onpick: (emote: Emote, keepOpen: boolean) => void; onclose: () => void } = $props();
@@ -72,27 +73,27 @@
 
 <svelte:window onpointerdown={onPointerDown} onkeydown={(e) => { if (e.key === "Escape") onclose(); }} />
 
-<div class="picker" role="dialog" aria-label="Emotes" bind:this={picker}>
+<div class="picker" role="dialog" aria-label={t("Emotes")} bind:this={picker}>
   <div class="top">
-    <input class="search" placeholder="Find an emote" aria-label="Find an emote" bind:value={search} {@attach focusSearch} />
+    <input class="search" placeholder={t("Find an emote")} aria-label={t("Find an emote")} bind:value={search} {@attach focusSearch} />
     <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" bind:this={fileInput} onchange={pickFile} />
-    <button class="add-btn" type="button" onclick={() => fileInput?.click()}>Add emote</button>
+    <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t("Add emote")}</button>
   </div>
 
   {#if adding}
     <form class="adding" onsubmit={save}>
       <img src={adding.preview} alt="" />
-      <input bind:value={newName} maxlength="32" placeholder="name" aria-label="Emote name" />
-      <button class="primary" type="submit" disabled={busy || newName.trim().length < 2}>Save</button>
-      <button class="cancel" type="button" onclick={stopAdding}>Cancel</button>
+      <input bind:value={newName} maxlength="32" placeholder={t("name")} aria-label={t("Emote name")} />
+      <button class="primary" type="submit" disabled={busy || newName.trim().length < 2}>{t("Save")}</button>
+      <button class="cancel" type="button" onclick={stopAdding}>{t("Cancel")}</button>
     </form>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 
   {#if store.emotes.length === 0}
-    <p class="empty">No emotes in {store.activeServer?.name ?? "this server"} yet. Add the first one!</p>
+    <p class="empty">{t("No emotes in {server} yet. Add the first one!", { server: store.activeServer?.name ?? t("this server") })}</p>
   {:else if shown.length === 0}
-    <p class="empty">No emotes match “{search.trim()}”.</p>
+    <p class="empty">{t("No emotes match “{search}”.", { search: search.trim() })}</p>
   {:else}
     <div class="grid">
       {#each shown as emote (emote.id)}
@@ -105,8 +106,8 @@
               class="remove"
               class:confirming={confirming === emote.id}
               type="button"
-              aria-label="Remove :{emote.name}:"
-              title={confirming === emote.id ? "Click again to remove" : `Remove :${emote.name}:`}
+              aria-label={t("Remove :{name}:", { name: emote.name })}
+              title={confirming === emote.id ? t("Click again to remove") : t("Remove :{name}:", { name: emote.name })}
               onclick={() => remove(emote)}
             >
               <Icon name="close" size={12} />
@@ -116,7 +117,7 @@
       {/each}
     </div>
   {/if}
-  <p class="hint">Type :name: in a message, or start with : to search. Shift-click to pick several.</p>
+  <p class="hint">{t("Type :name: in a message, or start with : to search. Shift-click to pick several.")}</p>
 </div>
 
 <style>

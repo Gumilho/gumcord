@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { isDesktop, store, type AudioDeviceKind, type KeybindAction } from "$lib/store.svelte.ts";
   import { keybindFromEvent, keybindLabel, systemWide } from "$lib/shortcuts.svelte.ts";
+  import { i18n, LANGUAGES, setLang, t, type Lang } from "$lib/i18n.svelte.ts";
   import { canPickOutput } from "$lib/audio.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -102,8 +103,8 @@
     const list = devices.filter((d) => d.kind === kind && d.deviceId);
     const hasDefault = list.some((d) => d.deviceId === "default");
     return [
-      ...(hasDefault ? [] : [{ id: "default", label: "System default" }]),
-      ...list.map((d, i) => ({ id: d.deviceId, label: d.label || `${kind === "audioinput" ? "Microphone" : "Speakers"} ${i + 1}` })),
+      ...(hasDefault ? [] : [{ id: "default", label: t("System default") }]),
+      ...list.map((d, i) => ({ id: d.deviceId, label: d.label || t(kind === "audioinput" ? "Microphone {n}" : "Speakers {n}", { n: i + 1 }) })),
     ];
   }
 
@@ -116,63 +117,74 @@
 
 <svelte:window onkeydowncapture={onRecordKey} />
 
-<Modal title="User settings" onclose={() => (recording ? stopRecording() : onclose())}>
+<Modal title={t("User settings")} onclose={() => (recording ? stopRecording() : onclose())}>
   <section>
-    <h3>Profile</h3>
+    <h3>{t("Profile")}</h3>
     <div class="profile">
       <div class="big-avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
       <div class="photo-actions">
         <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={photoInput} onchange={pickPhoto} />
-        <button class="primary" type="button" disabled={busy} onclick={() => photoInput?.click()}>Change photo</button>
-        <button class="link" type="button" disabled={busy} onclick={() => run(store.resetAvatar())}>Use my PocketID photo</button>
+        <button class="primary" type="button" disabled={busy} onclick={() => photoInput?.click()}>{t("Change photo")}</button>
+        <button class="link" type="button" disabled={busy} onclick={() => run(store.resetAvatar())}>{t("Use my PocketID photo")}</button>
       </div>
     </div>
     <form class="row" onsubmit={saveName}>
       <label class="field">
-        <span>Display name</span>
+        <span>{t("Display name")}</span>
         <input bind:value={name} maxlength="32" />
       </label>
-      <button class="primary" type="submit" disabled={busy || !name.trim() || name.trim() === store.me?.name}>Save</button>
+      <button class="primary" type="submit" disabled={busy || !name.trim() || name.trim() === store.me?.name}>{t("Save")}</button>
     </form>
-    <button class="link" type="button" disabled={busy} onclick={() => run(store.updateName(""))}>Use my PocketID name</button>
+    <button class="link" type="button" disabled={busy} onclick={() => run(store.updateName(""))}>{t("Use my PocketID name")}</button>
     {#if profileError}<p class="error">{profileError}</p>{/if}
   </section>
 
   <section>
-    <h3>Keybinds</h3>
-    <div class="modes" role="radiogroup" aria-label="Input mode">
-      <label><input type="radio" name="mode" checked={!store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: false })} /> Voice activity</label>
-      <label><input type="radio" name="mode" checked={store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: true })} /> Push to talk</label>
+    <label class="field">
+      <span>{t("Language")}</span>
+      <select value={i18n.lang} onchange={(e) => setLang(e.currentTarget.value as Lang)}>
+        {#each LANGUAGES as l (l.id)}
+          <option value={l.id}>{l.name}</option>
+        {/each}
+      </select>
+    </label>
+  </section>
+
+  <section>
+    <h3>{t("Keybinds")}</h3>
+    <div class="modes" role="radiogroup" aria-label={t("Input mode")}>
+      <label><input type="radio" name="mode" checked={!store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: false })} /> {t("Voice activity")}</label>
+      <label><input type="radio" name="mode" checked={store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: true })} /> {t("Push to talk")}</label>
     </div>
     {#if store.keybinds.pushToTalk && !store.keybinds.binds.pushToTalk}
-      <p class="error">Pick a push-to-talk key below: until then your microphone stays silent.</p>
+      <p class="error">{t("Pick a push-to-talk key below: until then your microphone stays silent.")}</p>
     {/if}
     <ul class="binds">
       {#each KEYBIND_ROWS as row (row.action)}
         {@const bind = store.keybinds.binds[row.action]}
         <li>
-          <span class="bind-name">{row.label}</span>
+          <span class="bind-name">{t(row.label)}</span>
           <kbd class:recording={recording === row.action}>
-            {recording === row.action ? "Press a key…" : bind ? keybindLabel(bind) : "Not set"}
+            {recording === row.action ? t("Press a key…") : bind ? keybindLabel(bind) : t("Not set")}
           </kbd>
-          <button class="link" type="button" onclick={() => startRecording(row.action)}>Change</button>
-          {#if bind}<button class="link" type="button" onclick={() => setBind(row.action, null)}>Clear</button>{/if}
+          <button class="link" type="button" onclick={() => startRecording(row.action)}>{t("Change")}</button>
+          {#if bind}<button class="link" type="button" onclick={() => setBind(row.action, null)}>{t("Clear")}</button>{/if}
         </li>
       {/each}
     </ul>
     <p class="hint">
-      {systemWide.on
+      {t(systemWide.on
         ? "These also work while another app is in front. The app takes over the key everywhere, so for push-to-talk pick one you don't type with (like F13 or a Ctrl combination)."
         : isDesktop
           ? "These work while Gumcord is focused: this system doesn't let apps take keys system-wide (Wayland)."
-          : "In the browser these work while Gumcord's tab is focused; the desktop app also takes them system-wide."}
+          : "In the browser these work while Gumcord's tab is focused; the desktop app also takes them system-wide.")}
     </p>
   </section>
 
   <section>
-    <h3>Voice</h3>
+    <h3>{t("Voice")}</h3>
     <label class="field">
-      <span>Microphone</span>
+      <span>{t("Microphone")}</span>
       <select value={selected("audioinput")} onchange={(e) => store.setDevice("audioinput", e.currentTarget.value)}>
         {#each options("audioinput") as o (o.id)}
           <option value={o.id}>{o.label}</option>
@@ -182,7 +194,7 @@
 
     {#if canPickOutput}
       <label class="field">
-        <span>Speakers</span>
+        <span>{t("Speakers")}</span>
         <select value={selected("audiooutput")} onchange={(e) => store.setDevice("audiooutput", e.currentTarget.value)}>
           {#each options("audiooutput") as o (o.id)}
             <option value={o.id}>{o.label}</option>
@@ -190,13 +202,13 @@
         </select>
       </label>
     {:else}
-      <p class="hint">This browser always plays through the system's default speakers.</p>
+      <p class="hint">{t("This browser always plays through the system's default speakers.")}</p>
     {/if}
 
     {#if !named}
       <p class="hint">
-        Your devices' names show up once Gumcord may use the microphone.
-        <button class="link" type="button" onclick={allowMic}>Allow</button>
+        {t("Your devices' names show up once Gumcord may use the microphone.")}
+        <button class="link" type="button" onclick={allowMic}>{t("Allow")}</button>
       </p>
     {/if}
   </section>
@@ -246,6 +258,8 @@
     gap: 10px;
   }
 
+  .binds .link { align-self: center; }
+
   .bind-name {
     flex: 1;
     color: #c8cce8;
@@ -253,7 +267,9 @@
   }
 
   kbd {
+    flex-shrink: 0;
     min-width: 110px;
+    white-space: nowrap;
     padding: 4px 8px;
     border: 1px solid #33365a;
     border-radius: 5px;

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
 
@@ -10,9 +11,9 @@
   class="toggle"
   class:active={store.showMembers}
   type="button"
-  aria-label="Member list"
+  aria-label={t("Member list")}
   aria-pressed={store.showMembers}
-  use:tooltip={store.showMembers ? "Hide member list" : "Show member list"}
+  use:tooltip={t(store.showMembers ? "Hide member list" : "Show member list")}
   onclick={() => store.toggleMembers()}
 >
   <Icon name="members" />

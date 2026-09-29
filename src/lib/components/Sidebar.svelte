@@ -8,6 +8,7 @@
   import ServerSettings from "$lib/components/ServerSettings.svelte";
   import UserSettings from "$lib/components/UserSettings.svelte";
   import Soundboard from "$lib/components/Soundboard.svelte";
+  import { t } from "$lib/i18n.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
   let soundboardOpen = $state(false);
@@ -20,7 +21,7 @@
     [ConnectionQuality.Good]: "good",
     [ConnectionQuality.Poor]: "poor",
     [ConnectionQuality.Lost]: "lost",
-    [ConnectionQuality.Unknown]: "checking…",
+    [ConnectionQuality.Unknown]: "checking…", // translated where shown
   };
 
   const quality = $derived({
@@ -109,8 +110,8 @@
   function onNavContext(e: MouseEvent) {
     if (!store.me?.admin || !store.activeServer) return;
     openMenu(e, [
-      { label: 'New Text Channel', action: () => startCreate('text') },
-      { label: 'New Voice Channel', action: () => startCreate('voice') },
+      { label: t('New Text Channel'), action: () => startCreate('text') },
+      { label: t('New Voice Channel'), action: () => startCreate('voice') },
     ]);
   }
 
@@ -119,10 +120,10 @@
     if (ch.kind === 'voice') {
       openMenu(e, store.voiceChannel?.id === ch.id
         ? [
-            { label: 'Open Call', action: () => store.openVoiceChannel(ch) },
-            { label: 'Leave Channel', action: () => store.leaveVoice(), danger: true },
+            { label: t('Open Call'), action: () => store.openVoiceChannel(ch) },
+            { label: t('Leave Channel'), action: () => store.leaveVoice(), danger: true },
           ]
-        : [{ label: store.room ? 'Switch to Channel' : 'Join Channel', action: () => store.openVoiceChannel(ch) }]);
+        : [{ label: t(store.room ? 'Switch to Channel' : 'Join Channel'), action: () => store.openVoiceChannel(ch) }]);
     } else {
       e.preventDefault(); // suppress browser menu for text channels
     }
@@ -156,7 +157,7 @@
     <input
       class="create-input"
       type="text"
-      placeholder="channel-name"
+      placeholder={t("channel-name")}
       bind:value={createName}
       use:focus
       onkeydown={(e) => { if (e.key === 'Enter') confirmCreate(); }}
@@ -171,11 +172,11 @@
     <span class="sidebar-title">{store.activeServer?.name ?? "Gumcord"}</span>
     <div class="header-actions">
       {#if store.me?.admin && store.activeServer}
-        <button class="icon-btn" aria-label="Server settings" use:tooltip={"Server settings"} onclick={() => (settingsOpen = true)}>
+        <button class="icon-btn" aria-label={t("Server settings")} use:tooltip={t("Server settings")} onclick={() => (settingsOpen = true)}>
           <Icon name="settings" size={18} />
         </button>
       {/if}
-      <button class="icon-btn" aria-label="Log out" use:tooltip={"Log out"} onclick={() => store.logout()}>
+      <button class="icon-btn" aria-label={t("Log out")} use:tooltip={t("Log out")} onclick={() => store.logout()}>
         <Icon name="logout" size={18} />
       </button>
     </div>
@@ -186,7 +187,7 @@
     <!-- Text section -->
     <div class="section-header">
       <span class="chevron"><Icon name="chevron" size={12} /></span>
-      Text
+      {t("Text")}
     </div>
 
     {#each textChannels as ch (ch.id)}
@@ -208,7 +209,7 @@
     <!-- Voice section -->
     <div class="section-header">
       <span class="chevron"><Icon name="chevron" size={12} /></span>
-      Voice
+      {t("Voice")}
     </div>
 
     {#each voiceChannels as ch (ch.id)}
@@ -242,7 +243,7 @@
               class:clickable
               role={clickable ? "button" : undefined}
               tabindex={clickable ? 0 : undefined}
-              aria-label={clickable ? `Voice settings for ${p.name}` : undefined}
+              aria-label={clickable ? t("Voice settings for {name}", { name: p.name }) : undefined}
               onclick={(e) => store.openUserMenu(e, p)}
               oncontextmenu={(e) => store.openUserMenu(e, p)}
               onkeydown={(e) => store.openUserMenu(e, p)}
@@ -252,19 +253,19 @@
               </div>
               <span class="participant-name">{p.name}</span>
               {#if live}
-                <span class="live-badge">LIVE</span>
+                <span class="live-badge">{t("LIVE")}</span>
               {/if}
               {#if mutedByMe}
-                <span class="status-icon muted-by-me" role="img" aria-label="Muted for you" use:tooltip={"Muted for you"}>
+                <span class="status-icon muted-by-me" role="img" aria-label={t("Muted for you")} use:tooltip={t("Muted for you")}>
                   <VoiceIcon kind="mic" slashed size={16} />
                 </span>
               {:else if p.muted}
-                <span class="status-icon" role="img" aria-label="Muted" use:tooltip={"Muted"}>
+                <span class="status-icon" role="img" aria-label={t("Muted")} use:tooltip={t("Muted")}>
                   <VoiceIcon kind="mic" slashed size={16} />
                 </span>
               {/if}
               {#if p.deafened}
-                <span class="status-icon" role="img" aria-label="Deafened" use:tooltip={"Deafened"}>
+                <span class="status-icon" role="img" aria-label={t("Deafened")} use:tooltip={t("Deafened")}>
                   <VoiceIcon kind="headphones" slashed size={16} />
                 </span>
               {/if}
@@ -283,13 +284,13 @@
   {#if store.room && store.voiceChannel}
     <div class="voice-panel">
       <div class="voice-status q-{quality.cls}">
-        <span class="ping" role="img" aria-label="Connection: {quality.label}" use:tooltip={`Connection: ${quality.label}`}>
+        <span class="ping" role="img" aria-label={t("Connection: {quality}", { quality: t(quality.label) })} use:tooltip={t("Connection: {quality}", { quality: t(quality.label) })}>
           <Icon name="signal" />
         </span>
         <div class="voice-text">
-          <span class="voice-label">Voice Connected</span>
+          <span class="voice-label">{t("Voice Connected")}</span>
           {#if store.audioBlocked}
-            <button class="audio-blocked" onclick={() => store.enableAudio()}>Click to enable audio</button>
+            <button class="audio-blocked" onclick={() => store.enableAudio()}>{t("Click to enable audio")}</button>
           {:else}
             <!-- Names the server too: you may be looking at a different one. -->
             <span class="voice-channel-name">{store.voiceChannel.name}{store.voiceServer ? ` / ${store.voiceServer.name}` : ""}</span>
@@ -310,9 +311,9 @@
         </button>
         <button
           class="icon-btn"
-          aria-label="Soundboard"
+          aria-label={t("Soundboard")}
           aria-expanded={soundboardOpen}
-          use:tooltip={"Soundboard"}
+          use:tooltip={t("Soundboard")}
           bind:this={soundboardBtn}
           onclick={() => (soundboardOpen = !soundboardOpen)}
         >
@@ -321,7 +322,7 @@
         {#if soundboardOpen && soundboardBtn}
           <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
         {/if}
-        <button class="icon-btn disconnect" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
+        <button class="icon-btn disconnect" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
           <Icon name="hangup" />
         </button>
       </div>
@@ -357,7 +358,7 @@
       </button>
     {/if}
 
-    <button class="icon-btn" aria-label="User settings" use:tooltip={"User settings"} onclick={() => (userSettingsOpen = true)}>
+    <button class="icon-btn" aria-label={t("User settings")} use:tooltip={t("User settings")} onclick={() => (userSettingsOpen = true)}>
       <Icon name="settings" />
     </button>
   </div>
@@ -373,7 +374,7 @@
     class:active={resizing}
     role="separator"
     aria-orientation="vertical"
-    aria-label="Resize sidebar"
+    aria-label={t("Resize sidebar")}
     aria-valuemin={MIN_WIDTH}
     aria-valuemax={MAX_WIDTH}
     aria-valuenow={width}

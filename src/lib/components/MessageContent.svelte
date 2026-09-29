@@ -2,6 +2,7 @@
   import { onlyEmotes, parseMessage, previewLinks } from "$lib/richtext.ts";
   import { getEmbed } from "$lib/embeds.ts";
   import { store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
 
   // A message's text with its links clickable and emotes shown, and link previews underneath.
   let { content, onresize, onview }: {
@@ -22,7 +23,7 @@
 {#each previews as url (url)}
   {#await getEmbed(url) then e}
     {#if e?.kind === "image" && e.image}
-      <button class="embed-picture" type="button" aria-label="View image" onclick={() => onview(e.image!)}>
+      <button class="embed-picture" type="button" aria-label={t("View image")} onclick={() => onview(e.image!)}>
         <img src={e.image} alt="" loading="lazy" onload={onresize} {@attach onresize} />
       </button>
     {:else if e}

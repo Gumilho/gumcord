@@ -8,6 +8,7 @@
   import UserAudioMenu from '$lib/components/UserAudioMenu.svelte';
   import ServerRail from '$lib/components/ServerRail.svelte';
   import { installShortcuts } from '$lib/shortcuts.svelte.ts';
+  import { t } from '$lib/i18n.svelte.ts';
 
   onMount(() => {
     void store.boot();
@@ -35,7 +36,7 @@
 {#if store.bootError}
   <div class="boot-error">
     <p>{store.bootError}</p>
-    <button onclick={() => store.boot()}>Retry</button>
+    <button onclick={() => store.boot()}>{t("Retry")}</button>
   </div>
 {:else if store.signedOut}
   <Login />

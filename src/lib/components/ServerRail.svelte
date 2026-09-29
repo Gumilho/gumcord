@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import { hue, initials } from "$lib/avatar.ts";
   import Icon from "$lib/components/Icon.svelte";
@@ -27,7 +28,7 @@
   }
 </script>
 
-<nav class="rail" aria-label="Servers">
+<nav class="rail" aria-label={t("Servers")}>
   {#each store.servers as s (s.id)}
     {@const active = store.activeServer?.id === s.id}
     <button
@@ -46,24 +47,24 @@
 
   {#if store.me?.admin}
     {#if store.servers.length > 0}<div class="divider" aria-hidden="true"></div>{/if}
-    <button class="server add" aria-label="Create a server" use:tooltip={"Create a server"} onclick={openCreate}>
+    <button class="server add" aria-label={t("Create a server")} use:tooltip={t("Create a server")} onclick={openCreate}>
       <Icon name="plus" />
     </button>
   {/if}
 </nav>
 
 {#if creating}
-  <Modal title="Create a server" onclose={() => (creating = false)}>
+  <Modal title={t("Create a server")} onclose={() => (creating = false)}>
     <form class="form" onsubmit={create}>
       <label>
-        <span>Server name</span>
-        <input bind:value={name} maxlength="64" placeholder="e.g. Friends" />
+        <span>{t("Server name")}</span>
+        <input bind:value={name} maxlength="64" placeholder={t("e.g. Friends")} />
       </label>
-      <p class="hint">It starts with a #general text channel and a General voice channel, with you as its only member.</p>
+      <p class="hint">{t("It starts with a #general text channel and a General voice channel, with you as its only member.")}</p>
       {#if error}<p class="error">{error}</p>{/if}
       <div class="actions">
-        <button type="button" class="secondary" onclick={() => (creating = false)}>Cancel</button>
-        <button type="submit" class="primary" disabled={!name.trim() || busy}>Create</button>
+        <button type="button" class="secondary" onclick={() => (creating = false)}>{t("Cancel")}</button>
+        <button type="submit" class="primary" disabled={!name.trim() || busy}>{t("Create")}</button>
       </div>
     </form>
   </Modal>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { isDesktop as desktop, store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
 
   // The web app only lands here after signing out. The desktop app signs in through the system browser
   // (window.open is routed there) while this screen polls for the session.
@@ -24,7 +25,7 @@
       prepared = { ...(await res.json()), at: Date.now() };
       error = "";
     } catch {
-      error = "Can't reach the server.";
+      error = t("Can't reach the server.");
     }
   }
 
@@ -72,7 +73,7 @@
       if (id !== attempt) return;
       if (res.status === 410) {
         stopPolling();
-        error = "Sign-in timed out. Try again.";
+        error = t("Sign-in timed out. Try again.");
         void prepare();
         return;
       }
@@ -94,17 +95,17 @@
     <h1>Gumcord</h1>
 
     {#if pending}
-      <p class="login-sub">Finish signing in in your browser. Check that it shows this code:</p>
+      <p class="login-sub">{t("Finish signing in in your browser. Check that it shows this code:")}</p>
       <div class="code">{pending.code}</div>
       <div class="actions">
         <button class="btn-primary" type="button" onclick={() => pending && window.open(pending.url, "_blank")}>
-          Open browser again
+          {t("Open browser again")}
         </button>
-        <button class="btn-secondary" type="button" onclick={cancel}>Cancel</button>
+        <button class="btn-secondary" type="button" onclick={cancel}>{t("Cancel")}</button>
       </div>
     {:else}
-      <p class="login-sub">{desktop ? "Sign in with your PocketID account." : "You've signed out."}</p>
-      <button class="btn-primary" type="button" onclick={signIn}>Sign in</button>
+      <p class="login-sub">{t(desktop ? "Sign in with your PocketID account." : "You've signed out.")}</p>
+      <button class="btn-primary" type="button" onclick={signIn}>{t("Sign in")}</button>
     {/if}
 
     {#if error}

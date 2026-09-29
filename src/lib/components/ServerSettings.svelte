@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { store, type Server, type User } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
 
@@ -46,49 +47,49 @@
   }
 </script>
 
-<Modal title="Server settings" {onclose}>
+<Modal title={t("Server settings")} {onclose}>
   <form class="row" onsubmit={rename}>
     <label class="field">
-      <span>Server name</span>
+      <span>{t("Server name")}</span>
       <input bind:value={name} maxlength="64" />
     </label>
-    <button class="primary" type="submit" disabled={!name.trim() || name.trim() === server.name}>Save</button>
+    <button class="primary" type="submit" disabled={!name.trim() || name.trim() === server.name}>{t("Save")}</button>
   </form>
 
   <section>
-    <h3>Members — {members.length}</h3>
+    <h3>{t("Members — {count}", { count: members.length })}</h3>
     <ul class="members">
       {#each members as m (m.id)}
         <li>
           <div class="avatar"><UserAvatar name={m.name} src={m.avatar} /></div>
           <span class="name">{m.name}</span>
-          {#if m.admin}<span class="badge">Admin</span>{/if}
-          <button class="link danger" type="button" onclick={() => run(store.removeMember(server.id, m.id))}>Remove</button>
+          {#if m.admin}<span class="badge">{t("Admin")}</span>{/if}
+          <button class="link danger" type="button" onclick={() => run(store.removeMember(server.id, m.id))}>{t("Remove")}</button>
         </li>
       {/each}
     </ul>
 
     {#if addable.length > 0}
       <div class="row">
-        <select bind:value={adding} aria-label="Person to add">
-          <option value="" disabled>Add someone…</option>
+        <select bind:value={adding} aria-label={t("Person to add")}>
+          <option value="" disabled>{t("Add someone…")}</option>
           {#each addable as u (u.id)}
             <option value={String(u.id)}>{u.name}</option>
           {/each}
         </select>
-        <button class="primary" type="button" disabled={!adding} onclick={add}>Add</button>
+        <button class="primary" type="button" disabled={!adding} onclick={add}>{t("Add")}</button>
       </div>
     {:else}
-      <p class="hint">Everyone who has signed in is already a member. People appear here after their first sign-in.</p>
+      <p class="hint">{t("Everyone who has signed in is already a member. People appear here after their first sign-in.")}</p>
     {/if}
   </section>
 
   {#if error}<p class="error">{error}</p>{/if}
 
   <section class="danger-zone">
-    <p class="hint">Deleting removes the server's channels and messages for everyone, and ends its calls.</p>
+    <p class="hint">{t("Deleting removes the server's channels and messages for everyone, and ends its calls.")}</p>
     <button class="delete" type="button" onclick={remove}>
-      {confirmDelete ? `Click again to delete “${server.name}”` : "Delete server"}
+      {confirmDelete ? t("Click again to delete “{name}”", { name: server.name }) : t("Delete server")}
     </button>
   </section>
 </Modal>

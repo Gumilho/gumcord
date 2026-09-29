@@ -7,6 +7,7 @@
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
   import MessageContent from "$lib/components/MessageContent.svelte";
   import EmotePicker from "$lib/components/EmotePicker.svelte";
+  import { t } from "$lib/i18n.svelte.ts";
 
   let msgEnd: HTMLDivElement | null = $state(null);
   // Updated on scroll only; content growing (an image loading) fires no scroll event,
@@ -143,13 +144,13 @@
               <button
                 class="msg-image-btn"
                 type="button"
-                aria-label="View image"
+                aria-label={t("View image")}
                 onclick={() => (viewing = msg.attachment_url ?? null)}
               >
                 <img
                   class="msg-image"
                   src={msg.attachment_url}
-                  alt="attachment"
+                  alt={t("attachment")}
                   loading="lazy"
                   onload={onImageLoad}
                 />
@@ -170,11 +171,11 @@
           {#if store.uploading || store.pendingAttachment || store.uploadError}
             <div class="attachments">
               {#if store.uploading}
-                <div class="upload-status">Uploading…</div>
+                <div class="upload-status">{t("Uploading…")}</div>
               {:else if store.uploadError}
                 <div class="upload-status error">
                   {store.uploadError}
-                  <button type="button" class="dismiss-btn" aria-label="Dismiss" use:tooltip={"Dismiss"} onclick={() => (store.uploadError = "")}>
+                  <button type="button" class="dismiss-btn" aria-label={t("Dismiss")} use:tooltip={t("Dismiss")} onclick={() => (store.uploadError = "")}>
                     <Icon name="close" size={16} />
                   </button>
                 </div>
@@ -191,8 +192,8 @@
                   <button
                     type="button"
                     class="tile-remove"
-                    aria-label="Remove attachment"
-                    use:tooltip={"Remove attachment"}
+                    aria-label={t("Remove attachment")}
+                    use:tooltip={t("Remove attachment")}
                     onclick={() => (store.pendingAttachment = null)}
                   >
                     <Icon name="trash" size={18} />
@@ -207,8 +208,8 @@
             <button
               class="attach-btn"
               type="button"
-              aria-label="Upload a file"
-              use:tooltip={"Upload a file"}
+              aria-label={t("Upload a file")}
+              use:tooltip={t("Upload a file")}
               disabled={store.uploading}
               onclick={() => fileInput?.click()}
             >
@@ -219,8 +220,8 @@
               rows="1"
               bind:this={textarea}
               bind:value={store.draft}
-              placeholder="Message #{store.activeChannel.name}"
-              aria-label="Message #{store.activeChannel.name}"
+              placeholder={t("Message #{channel}", { channel: store.activeChannel.name })}
+              aria-label={t("Message #{channel}", { channel: store.activeChannel.name })}
               onkeydown={onInputKeydown}
               oninput={() => { trackCaret(); highlighted = 0; }}
               onkeyup={trackCaret}
@@ -229,9 +230,9 @@
             <button
               class="attach-btn emote-btn"
               type="button"
-              aria-label="Emotes"
+              aria-label={t("Emotes")}
               aria-expanded={pickerOpen}
-              use:tooltip={"Emotes"}
+              use:tooltip={t("Emotes")}
               onclick={() => (pickerOpen = !pickerOpen)}
             >
               <Icon name="smile" />
@@ -239,7 +240,7 @@
           </div>
         </div>
         {#if suggestions.length}
-          <ul class="suggestions" role="listbox" aria-label="Emotes matching :{emoteSearch}">
+          <ul class="suggestions" role="listbox" aria-label={t("Emotes matching :{search}", { search: emoteSearch })}>
             {#each suggestions as emote, i (emote.id)}
               <li role="option" aria-selected={i === Math.min(highlighted, suggestions.length - 1)}>
                 <!-- mousedown keeps the focus (and caret) in the message box -->
@@ -263,11 +264,11 @@
 {:else}
   <div class="empty-state">
     {#if store.servers.length === 0}
-      {store.me?.admin
+      {t(store.me?.admin
         ? "No servers yet. Create one with the + on the left."
-        : "You're not in any servers yet. Ask an admin to add you."}
+        : "You're not in any servers yet. Ask an admin to add you.")}
     {:else}
-      Select a channel
+      {t("Select a channel")}
     {/if}
   </div>
 {/if}
@@ -278,9 +279,9 @@
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="lightbox" onclick={() => (viewing = null)}>
-    <div class="lightbox-body" role="dialog" aria-modal="true" aria-label="Image preview" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-      <img src={viewing} alt="attachment" />
-      <a class="lightbox-link" href={viewing} target="_blank" rel="noreferrer">Open in browser</a>
+    <div class="lightbox-body" role="dialog" aria-modal="true" aria-label={t("Image preview")} tabindex="-1" onclick={(e) => e.stopPropagation()}>
+      <img src={viewing} alt={t("attachment")} />
+      <a class="lightbox-link" href={viewing} target="_blank" rel="noreferrer">{t("Open in browser")}</a>
     </div>
   </div>
 {/if}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
+  import { t } from "$lib/i18n.svelte.ts";
 
   // Per-person volume and mute for someone's voice, or for their screen-share audio when opened on a stream.
   const MENU_W = 232;
@@ -30,15 +31,15 @@
     onclick={() => store.closeUserMenu()}
     oncontextmenu={(e) => { e.preventDefault(); store.closeUserMenu(); }}
   ></div>
-  <div class="menu" role="menu" aria-label="{stream ? 'Stream' : 'Voice'} settings for {menu.name}" style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
+  <div class="menu" role="menu" aria-label={t(stream ? "Stream settings for {name}" : "Voice settings for {name}", { name: menu.name })} style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
     <div class="name">{menu.name}</div>
 
     <div class="volume">
       <div class="volume-head">
-        <span>{stream ? "Stream Volume" : "User Volume"}</span>
+        <span>{t(stream ? "Stream Volume" : "User Volume")}</span>
         <span class="value">
           {#if percent !== 100}
-            <button class="reset" type="button" onclick={() => store.setUserVolume(menu.identity, 1, menu.kind)}>Reset</button>
+            <button class="reset" type="button" onclick={() => store.setUserVolume(menu.identity, 1, menu.kind)}>{t("Reset")}</button>
           {/if}
           {percent}%
         </span>
@@ -50,7 +51,7 @@
         step="1"
         value={percent}
         disabled={audio.muted}
-        aria-label="{stream ? 'Stream volume' : 'Volume'} for {menu.name}"
+        aria-label={t(stream ? "Stream volume for {name}" : "Volume for {name}", { name: menu.name })}
         style="--fill: {percent / 2}%"
         oninput={(e) => store.setUserVolume(menu.identity, Number(e.currentTarget.value) / 100, menu.kind)}
       />
@@ -65,7 +66,7 @@
       aria-checked={audio.muted}
       onclick={() => store.toggleUserMute(menu.identity, menu.kind)}
     >
-      <span>{stream ? "Mute Stream" : "Mute"}</span>
+      <span>{t(stream ? "Mute Stream" : "Mute")}</span>
       <span class="check" class:on={audio.muted} aria-hidden="true">
         {#if audio.muted}
           <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5" /></svg>

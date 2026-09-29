@@ -9,6 +9,7 @@
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
   import Soundboard from "$lib/components/Soundboard.svelte";
+  import { t } from "$lib/i18n.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
   let soundboardOpen = $state(false);
@@ -64,7 +65,7 @@
   }
 
   function streamLabel(s: ScreenStream) {
-    return s.local ? "Your screen" : `${s.name}'s screen`;
+    return s.local ? t("Your screen") : t("{name}'s screen", { name: s.name });
   }
 </script>
 
@@ -86,7 +87,7 @@
       style="--hue: {hue(p.name)}"
       role={clickable ? "button" : undefined}
       tabindex={clickable ? 0 : undefined}
-      aria-label={clickable ? `Voice settings for ${p.name}` : undefined}
+      aria-label={clickable ? t("Voice settings for {name}", { name: p.name }) : undefined}
       onclick={(e) => store.openUserMenu(e, p)}
       oncontextmenu={(e) => store.openUserMenu(e, p)}
       onkeydown={(e) => store.openUserMenu(e, p)}
@@ -98,12 +99,12 @@
       <div class="tile-label">
         <span class="tile-name">{p.name}</span>
         {#if store.userAudioFor(p.identity).muted}
-          <span class="tile-icon muted-by-me" role="img" aria-label="Muted for you"><VoiceIcon kind="mic" slashed size={16} /></span>
+          <span class="tile-icon muted-by-me" role="img" aria-label={t("Muted for you")}><VoiceIcon kind="mic" slashed size={16} /></span>
         {:else if p.muted}
-          <span class="tile-icon" role="img" aria-label="Muted"><VoiceIcon kind="mic" slashed size={16} /></span>
+          <span class="tile-icon" role="img" aria-label={t("Muted")}><VoiceIcon kind="mic" slashed size={16} /></span>
         {/if}
         {#if p.deafened}
-          <span class="tile-icon" role="img" aria-label="Deafened"><VoiceIcon kind="headphones" slashed size={16} /></span>
+          <span class="tile-icon" role="img" aria-label={t("Deafened")}><VoiceIcon kind="headphones" slashed size={16} /></span>
         {/if}
       </div>
     </div>
@@ -123,35 +124,35 @@
         <video class="tile-video" use:attachVideo={s.track} autoplay playsinline muted></video>
         <button
           class="tile-hit"
-          aria-label={spotlight ? `Stop focusing ${streamLabel(s)}` : `Focus ${streamLabel(s)}`}
+          aria-label={t(spotlight ? "Stop focusing {stream}" : "Focus {stream}", { stream: streamLabel(s) })}
           onclick={() => toggleFocus(s)}
         ></button>
         <div class="tile-actions">
           {#if !s.local}
-            <button class="tile-action" aria-label="Stream volume" use:tooltip={"Stream volume"} onclick={(e) => store.openUserMenu(e, s, "stream")}>
+            <button class="tile-action" aria-label={t("Stream volume")} use:tooltip={t("Stream volume")} onclick={(e) => store.openUserMenu(e, s, "stream")}>
               <Icon name={streamMuted ? "volumeOff" : "speaker"} />
             </button>
-            <button class="tile-action" aria-label="Stop watching" use:tooltip={"Stop watching"} onclick={() => stopWatching(s)}>
+            <button class="tile-action" aria-label={t("Stop watching")} use:tooltip={t("Stop watching")} onclick={() => stopWatching(s)}>
               <Icon name="eyeOff" />
             </button>
           {/if}
-          <button class="tile-action" aria-label="Fullscreen" use:tooltip={"Fullscreen"} onclick={toggleFullscreen}>
+          <button class="tile-action" aria-label={t("Fullscreen")} use:tooltip={t("Fullscreen")} onclick={toggleFullscreen}>
             <Icon name="fullscreen" />
           </button>
         </div>
       {:else}
         <div class="stream-invite">
-          <span class="stream-invite-text">{s.name} is live</span>
+          <span class="stream-invite-text">{t("{name} is live", { name: s.name })}</span>
           <button class="watch-btn" disabled={s.loading} onclick={() => watch(s)}>
-            {s.loading ? "Loading…" : "Watch Stream"}
+            {t(s.loading ? "Loading…" : "Watch Stream")}
           </button>
         </div>
       {/if}
       <div class="tile-label">
-        <span class="live-badge">LIVE</span>
+        <span class="live-badge">{t("LIVE")}</span>
         <span class="tile-name">{streamLabel(s)}</span>
         {#if streamMuted}
-          <span class="tile-icon muted-by-me" role="img" aria-label="Stream muted for you"><Icon name="volumeOff" size={16} /></span>
+          <span class="tile-icon muted-by-me" role="img" aria-label={t("Stream muted for you")}><Icon name="volumeOff" size={16} /></span>
         {/if}
       </div>
     </div>
@@ -177,7 +178,7 @@
       </div>
 
       <div class="controls">
-        <button class="ctrl" aria-disabled="true" aria-label="Turn on camera" use:tooltip={"Camera is coming soon"}>
+        <button class="ctrl" aria-disabled="true" aria-label={t("Turn on camera")} use:tooltip={t("Camera is coming soon")}>
           <Icon name="camera" size={24} />
         </button>
         <button
@@ -193,9 +194,9 @@
         </button>
         <button
           class="ctrl"
-          aria-label="Soundboard"
+          aria-label={t("Soundboard")}
           aria-expanded={soundboardOpen}
-          use:tooltip={"Soundboard"}
+          use:tooltip={t("Soundboard")}
           bind:this={soundboardBtn}
           onclick={() => (soundboardOpen = !soundboardOpen)}
         >
@@ -227,7 +228,7 @@
         >
           <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
         </button>
-        <button class="ctrl hangup" aria-label="Disconnect" use:tooltip={"Disconnect"} onclick={() => store.leaveVoice()}>
+        <button class="ctrl hangup" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
           <Icon name="hangup" size={24} />
         </button>
       </div>

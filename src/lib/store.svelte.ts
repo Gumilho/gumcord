@@ -5,6 +5,7 @@ import {
 import { audioContext, audioRunning, resumeAudio, setOutputDevice } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
 import { playClip, playSound, preloadSounds } from "./sounds.ts";
+import { serverMessage, t } from "./i18n.svelte.ts";
 
 export type ChannelKind = "text" | "voice";
 // Servers group channels. Admins see every server; everyone else, the ones they've been added to.
@@ -117,6 +118,12 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, ms = REQUES
   } finally {
     clearTimeout(timer);
   }
+}
+
+// What went wrong, from a failed response: the server's reason in the app's language.
+async function errorText(res: Response) {
+  const text = (await res.text()).trim();
+  return text ? serverMessage(text) : t("Failed ({status}).", { status: res.status });
 }
 
 const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
@@ -238,16 +245,16 @@ class GumcordStore {
 
   // Labels shared by the sidebar and call-view controls.
   get muteLabel() {
-    return this.micBlocked ? "Microphone unavailable. Check permissions" : this.voiceMuted ? "Unmute" : "Mute";
+    return t(this.micBlocked ? "Microphone unavailable. Check permissions" : this.voiceMuted ? "Unmute" : "Mute");
   }
 
   get deafenLabel() {
-    return this.voiceDeafened ? "Undeafen" : "Deafen";
+    return t(this.voiceDeafened ? "Undeafen" : "Deafen");
   }
 
   get shareLabel() {
-    if (!this.canScreenShare) return "Screen sharing isn't supported in this window";
-    return this.screenSharing ? "Stop sharing" : "Share your screen";
+    if (!this.canScreenShare) return t("Screen sharing isn't supported in this window");
+    return t(this.screenSharing ? "Stop sharing" : "Share your screen");
   }
 
   // API request with a timeout. A 401 means the session ended, which drops back to the login screen.
@@ -317,7 +324,7 @@ class GumcordStore {
     } catch (err) {
       // Anything unexpected must land on the error screen, never leave the splash up forever.
       console.error("Boot failed:", err);
-      this.bootError = `Couldn't load Gumcord: ${err instanceof Error ? err.message : String(err)}`;
+      this.bootError = t("Couldn't load Gumcord: {error}", { error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -326,11 +333,11 @@ class GumcordStore {
     try {
       [me, servers] = await Promise.all([this.#api("/me"), this.#api("/servers")]);
     } catch {
-      this.bootError = "Cannot reach server. Is the backend running?";
+      this.bootError = t("Cannot reach server. Is the backend running?");
       return;
     }
     if (me.status === 401) { this.#needSignIn(); return; }
-    if (!me.ok || !servers.ok) { this.bootError = `Server error (${me.ok ? servers.status : me.status}).`; return; }
+    if (!me.ok || !servers.ok) { this.bootError = t("Server error ({status}).", { status: me.ok ? servers.status : me.status }); return; }
 
     this.me        = await me.json();
     this.signedOut = false;
@@ -441,7 +448,7 @@ class GumcordStore {
   // show, or "". The lists themselves update from the server's broadcast, which reaches this client too.
   async addItem(library: Library, name: string, file: File): Promise<string> {
     const serverId = this.#libraryServer(library);
-    if (serverId === undefined) return "No server open.";
+    if (serverId === undefined) return t("No server open.");
     const form = new FormData();
     form.append("name", name);
     form.append("file", file);
@@ -450,7 +457,7 @@ class GumcordStore {
 
   async removeItem(library: Library, item: ServerItem): Promise<string> {
     const serverId = this.#libraryServer(library);
-    if (serverId === undefined) return "No server open.";
+    if (serverId === undefined) return t("No server open.");
     return this.#libraryRequest(`/servers/${serverId}/${library}/${item.id}`, { method: "DELETE" });
   }
 
@@ -465,10 +472,9 @@ class GumcordStore {
   async #libraryRequest(path: string, init: RequestInit): Promise<string> {
     try {
       const res = await this.#api(path, init, UPLOAD_TIMEOUT_MS);
-      if (res.ok) return "";
-      return (await res.text()).trim() || `Failed (${res.status}).`;
+      return res.ok ? "" : await errorText(res);
     } catch {
-      return "Can't reach the server.";
+      return t("Can't reach the server.");
     }
   }
 
@@ -566,13 +572,13 @@ class GumcordStore {
   async #profileRequest(path: string, init: RequestInit, ms?: number): Promise<string> {
     try {
       const res = await this.#api(path, init, ms);
-      if (!res.ok) return (await res.text()).trim() || `Failed (${res.status}).`;
+      if (!res.ok) return await errorText(res);
       // The server also updates any call you're in, name and picture in one request. (Doing it from
       // here would race: each LiveKit update carries the others' current values.)
       this.me = await res.json();
       return "";
     } catch {
-      return "Can't reach the server.";
+      return t("Can't reach the server.");
     }
   }
 
@@ -586,10 +592,9 @@ class GumcordStore {
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
       });
-      if (res.ok) return "";
-      return (await res.text()).trim() || `Failed (${res.status}).`;
+      return res.ok ? "" : await errorText(res);
     } catch {
-      return "Can't reach the server.";
+      return t("Can't reach the server.");
     }
   }
 
@@ -599,7 +604,7 @@ class GumcordStore {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     }).catch(() => null);
-    if (!res?.ok) return res ? (await res.text()).trim() : "Can't reach the server.";
+    if (!res?.ok) return res ? await errorText(res) : t("Can't reach the server.");
     const created: Server = await res.json();
     this.servers = [...this.servers.filter((s) => s.id !== created.id), created];
     await this.selectServer(created);
@@ -671,12 +676,12 @@ class GumcordStore {
       form.append("file", file);
       const res = await this.#api("/upload", { method: "POST", body: form }, UPLOAD_TIMEOUT_MS);
       if (!res.ok) {
-        this.uploadError = res.status === 413 ? "File too large (max 25 MB)." : "Upload failed.";
+        this.uploadError = t(res.status === 413 ? "File too large (max 25 MB)." : "Upload failed.");
         return;
       }
       this.pendingAttachment = await res.json();
     } catch {
-      this.uploadError = "Upload failed.";
+      this.uploadError = t("Upload failed.");
     } finally {
       this.uploading = false;
     }
