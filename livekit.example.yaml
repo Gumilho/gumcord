@@ -15,6 +15,13 @@ rtc:
     includes:
       - wt0
 
+# Optional hardening (see DEPLOY.md): the API and signalling port only on the addresses that use it.
+# bind_addresses:
+#   - 127.0.0.1
+#   - 172.17.0.1   # docker0: host.docker.internal for the Gumcord container
+#   - 100.x.y.z    # this machine's NetBird address
+# room:
+#   max_participants: 25
 keys:
   # Must match LK_API_KEY / LK_API_SECRET in .env. Generate a secret with: openssl rand -base64 32
   gumcord: replace-with-a-long-random-secret

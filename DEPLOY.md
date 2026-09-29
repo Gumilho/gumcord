@@ -67,6 +67,26 @@ Open the site, sign in and join a voice channel.
 - If joining hangs, or connects but nobody hears anything, the cause is `node_ip` or the UDP/TCP services.
 - If signing in fails, check the callback URL and the allowed groups in PocketID.
 
+## 5. Hardening
+
+Gumcord and LiveKit only need to be reached through NetBird. Out of the box, Docker and LiveKit listen on every interface, so devices on your LAN (and other NetBird peers) can reach them directly, skipping the proxy and its HTTPS.
+
+- **Keep the secrets private:** `chmod 600 .env livekit.yaml`.
+- **LiveKit's API only for NetBird, the Gumcord container and this machine.** In `livekit.yaml`:
+
+  ```yaml
+  bind_addresses:
+    - 127.0.0.1
+    - 172.17.0.1      # docker0, what host.docker.internal points the Gumcord container at
+    - 100.x.y.z       # this machine's NetBird address: ip -4 addr show wt0
+  room:
+    max_participants: 25 # per call
+  ```
+
+  If NetBird isn't up yet when LiveKit starts, LiveKit exits, and Docker restarts it until it is.
+- **Run LiveKit as your user, not root.** In `docker-compose.yml`, under `livekit:`, add `user: "1000:1000"` (your `id -u` and `id -g`, the owner of `livekit.yaml`). It only uses ports above 1024.
+- **Gumcord only on the NetBird address:** change its port to `"100.x.y.z:8089:8080"`. Unlike LiveKit, Docker doesn't retry if that address doesn't exist yet at boot, so also make Docker start after NetBird: `sudo systemctl edit docker`, then add `[Unit]`, `After=netbird.service`, `Wants=netbird.service`. Alternatively, leave it and keep port 8089 closed in your router (it is unless you forwarded it).
+
 ## Backups and updates
 
 - **Back up `data/`.** It holds the database, uploads, and `session.key`, which signs sessions; losing it signs everyone out. For a consistent copy while the app runs: `sqlite3 data/gumcord.db ".backup gumcord-backup.db"`.
