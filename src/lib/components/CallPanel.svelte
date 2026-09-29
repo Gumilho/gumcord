@@ -106,7 +106,14 @@
   {/snippet}
 
   {#snippet streamTile(s: ScreenStream, spotlight: boolean)}
-    <div class="tile stream" class:spotlight style="--hue: {hue(s.name)}">
+    {@const streamMuted = !s.local && store.userAudioFor(s.identity).streamMuted}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="tile stream"
+      class:spotlight
+      style="--hue: {hue(s.name)}"
+      oncontextmenu={(e) => { if (!s.local) store.openUserMenu(e, s, "stream"); }}
+    >
       {#if s.track}
         <!-- svelte-ignore a11y_media_has_caption -->
         <video class="tile-video" use:attachVideo={s.track} autoplay playsinline muted></video>
@@ -117,6 +124,9 @@
         ></button>
         <div class="tile-actions">
           {#if !s.local}
+            <button class="tile-action" aria-label="Stream volume" use:tooltip={"Stream volume"} onclick={(e) => store.openUserMenu(e, s, "stream")}>
+              <Icon name={streamMuted ? "volumeOff" : "speaker"} />
+            </button>
             <button class="tile-action" aria-label="Stop watching" use:tooltip={"Stop watching"} onclick={() => stopWatching(s)}>
               <Icon name="eyeOff" />
             </button>
@@ -136,6 +146,9 @@
       <div class="tile-label">
         <span class="live-badge">LIVE</span>
         <span class="tile-name">{streamLabel(s)}</span>
+        {#if streamMuted}
+          <span class="tile-icon muted-by-me" role="img" aria-label="Stream muted for you"><Icon name="volumeOff" size={16} /></span>
+        {/if}
       </div>
     </div>
   {/snippet}

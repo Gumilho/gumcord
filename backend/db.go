@@ -73,6 +73,7 @@ func initDB(dataDir string) {
 // Schema changes in order. PRAGMA user_version records how many have run.
 var migrations = []func(*sql.Tx) error{
 	migrateServers,
+	migrateStreamAudio,
 }
 
 func migrate() {
@@ -181,6 +182,15 @@ func addColumn(table, column, def string) {
 			log.Fatal(err)
 		}
 	}
+}
+
+// migrateStreamAudio adds per-person volume and mute for screen-share audio, separate from voice.
+func migrateStreamAudio(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE user_audio ADD COLUMN stream_volume REAL NOT NULL DEFAULT 1`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`ALTER TABLE user_audio ADD COLUMN stream_muted INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // upsertUser records a login, refreshing the display name, picture and admin status from the

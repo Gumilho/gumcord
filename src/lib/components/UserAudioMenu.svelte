@@ -1,12 +1,17 @@
 <script lang="ts">
   import { store } from "$lib/store.svelte.ts";
 
-  // Per-person volume and mute, opened by right-clicking someone in the voice list or a call tile.
+  // Per-person volume and mute for someone's voice, or for their screen-share audio when opened on a stream.
   const MENU_W = 232;
   const MENU_H = 150;
 
   const menu = $derived(store.userMenu);
-  const audio = $derived(menu ? store.userAudioFor(menu.identity) : null);
+  const stream = $derived(menu?.kind === "stream");
+  const audio = $derived.by(() => {
+    if (!menu) return null;
+    const a = store.userAudioFor(menu.identity);
+    return stream ? { volume: a.streamVolume, muted: a.streamMuted } : { volume: a.volume, muted: a.muted };
+  });
   const percent = $derived(audio ? Math.round(audio.volume * 100) : 100);
   // Keep the whole menu on screen.
   const pos = $derived(menu && {
@@ -25,15 +30,15 @@
     onclick={() => store.closeUserMenu()}
     oncontextmenu={(e) => { e.preventDefault(); store.closeUserMenu(); }}
   ></div>
-  <div class="menu" role="menu" aria-label="Voice settings for {menu.name}" style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
+  <div class="menu" role="menu" aria-label="{stream ? 'Stream' : 'Voice'} settings for {menu.name}" style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
     <div class="name">{menu.name}</div>
 
     <div class="volume">
       <div class="volume-head">
-        <span>User Volume</span>
+        <span>{stream ? "Stream Volume" : "User Volume"}</span>
         <span class="value">
           {#if percent !== 100}
-            <button class="reset" type="button" onclick={() => store.setUserVolume(menu.identity, 1)}>Reset</button>
+            <button class="reset" type="button" onclick={() => store.setUserVolume(menu.identity, 1, menu.kind)}>Reset</button>
           {/if}
           {percent}%
         </span>
@@ -45,9 +50,9 @@
         step="1"
         value={percent}
         disabled={audio.muted}
-        aria-label="Volume for {menu.name}"
+        aria-label="{stream ? 'Stream volume' : 'Volume'} for {menu.name}"
         style="--fill: {percent / 2}%"
-        oninput={(e) => store.setUserVolume(menu.identity, Number(e.currentTarget.value) / 100)}
+        oninput={(e) => store.setUserVolume(menu.identity, Number(e.currentTarget.value) / 100, menu.kind)}
       />
     </div>
 
@@ -58,9 +63,9 @@
       type="button"
       role="menuitemcheckbox"
       aria-checked={audio.muted}
-      onclick={() => store.toggleUserMute(menu.identity)}
+      onclick={() => store.toggleUserMute(menu.identity, menu.kind)}
     >
-      <span>Mute</span>
+      <span>{stream ? "Mute Stream" : "Mute"}</span>
       <span class="check" class:on={audio.muted} aria-hidden="true">
         {#if audio.muted}
           <svg viewBox="0 0 24 24" width="14" height="14"><path fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5" /></svg>

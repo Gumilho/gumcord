@@ -25,8 +25,11 @@ export interface VoiceMember extends VoiceParticipant { streaming: boolean; }
 const JUST_LEFT_MS = 5_000;
 // How loud this user hears another in voice (1 = 100%, up to 2), or whether they've muted them.
 // Local to the listener: the other person isn't affected or told.
-export interface UserAudio { volume: number; muted: boolean; }
-const DEFAULT_USER_AUDIO: UserAudio = { volume: 1, muted: false };
+// Their screen-share audio has its own volume and mute.
+export interface UserAudio { volume: number; muted: boolean; streamVolume: number; streamMuted: boolean; }
+const DEFAULT_USER_AUDIO: UserAudio = { volume: 1, muted: false, streamVolume: 1, streamMuted: false };
+// Which of someone's audio a setting or the menu is about.
+export type AudioKind = "voice" | "stream";
 // Sliders fire continuously; save once the value settles.
 const USER_AUDIO_SAVE_MS = 400;
 // track is null until the viewer opts in to watching; loading covers the gap after they do.
@@ -152,7 +155,7 @@ class GumcordStore {
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
   userAudio:         ReadonlyMap<string, UserAudio> = $state.raw(new Map());
   // The per-person audio menu, opened by right-clicking someone in the call.
-  userMenu: { identity: string; name: string; x: number; y: number } | null = $state(null);
+  userMenu: { identity: string; name: string; kind: AudioKind; x: number; y: number } | null = $state(null);
   screenSharing                           = $derived(this.streams.some((s) => s.local));
   readonly canScreenShare                 = typeof navigator.mediaDevices?.getDisplayMedia === "function";
 
@@ -859,12 +862,12 @@ class GumcordStore {
     return this.userAudio.get(identity) ?? DEFAULT_USER_AUDIO;
   }
 
-  // Screen-share audio follows deafen only; per-person settings are for voices.
   #volumeFor(identity: string, source: Track.Source) {
     if (this.voiceDeafened) return 0;
-    if (source !== Track.Source.Microphone) return 1;
-    const { volume, muted } = this.userAudioFor(identity);
-    return muted ? 0 : volume;
+    const audio = this.userAudioFor(identity);
+    if (source === Track.Source.Microphone) return audio.muted ? 0 : audio.volume;
+    if (source === Track.Source.ScreenShareAudio) return audio.streamMuted ? 0 : audio.streamVolume;
+    return 1;
   }
 
   // LiveKit remembers these per source and applies them to tracks that arrive later.
@@ -878,20 +881,23 @@ class GumcordStore {
     try {
       const res = await this.#api("/user-audio");
       if (!res.ok) return;
-      const list: (UserAudio & { target_id: number })[] = await res.json();
-      this.userAudio = new Map(list.map((a) => [String(a.target_id), { volume: a.volume, muted: a.muted }]));
+      const list: { target_id: number; volume: number; muted: boolean; stream_volume: number; stream_muted: boolean }[] = await res.json();
+      this.userAudio = new Map(list.map((a) => [String(a.target_id), {
+        volume: a.volume, muted: a.muted, streamVolume: a.stream_volume, streamMuted: a.stream_muted,
+      }]));
     } catch (err) {
       console.warn("Couldn't load voice settings:", err);
     }
   }
 
-  setUserVolume(identity: string, volume: number) {
-    this.#setUserAudio(identity, { ...this.userAudioFor(identity), volume });
+  setUserVolume(identity: string, volume: number, kind: AudioKind = "voice") {
+    const audio = this.userAudioFor(identity);
+    this.#setUserAudio(identity, kind === "voice" ? { ...audio, volume } : { ...audio, streamVolume: volume });
   }
 
-  toggleUserMute(identity: string) {
+  toggleUserMute(identity: string, kind: AudioKind = "voice") {
     const audio = this.userAudioFor(identity);
-    this.#setUserAudio(identity, { ...audio, muted: !audio.muted });
+    this.#setUserAudio(identity, kind === "voice" ? { ...audio, muted: !audio.muted } : { ...audio, streamMuted: !audio.streamMuted });
   }
 
   #setUserAudio(identity: string, audio: UserAudio) {
@@ -905,7 +911,9 @@ class GumcordStore {
       this.#api(`/user-audio/${identity}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(audio),
+        body: JSON.stringify({
+          volume: audio.volume, muted: audio.muted, stream_volume: audio.streamVolume, stream_muted: audio.streamMuted,
+        }),
       }).catch((err) => console.warn("Couldn't save voice settings:", err));
     }, USER_AUDIO_SAVE_MS));
   }
@@ -916,7 +924,7 @@ class GumcordStore {
 
   // Click or right-click opens it at the pointer; Enter or Space opens it under the row.
   // Your own row has no menu: there's nothing to adjust about hearing yourself.
-  openUserMenu(e: MouseEvent | KeyboardEvent, p: { identity: string; name: string }) {
+  openUserMenu(e: MouseEvent | KeyboardEvent, p: { identity: string; name: string }, kind: AudioKind = "voice") {
     if (e instanceof KeyboardEvent && e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     e.stopPropagation();
@@ -924,7 +932,7 @@ class GumcordStore {
     const at = e instanceof MouseEvent
       ? { x: e.clientX, y: e.clientY }
       : (() => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); return { x: r.left, y: r.bottom }; })();
-    this.userMenu = { identity: p.identity, name: p.name, ...at };
+    this.userMenu = { identity: p.identity, name: p.name, kind, ...at };
   }
 
   closeUserMenu() {
