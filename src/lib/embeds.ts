@@ -9,7 +9,9 @@ export interface Embed {
   image?: string;
   large?: boolean;
   color?: string;
-  video?: string; // a player to embed (YouTube, Vimeo), or for kind "video" the file
+  player?: string; // a video player to frame (YouTube, Vimeo)
+  video?: string; // a video file for the chat's own player (X posts, links to video files)
+  loop?: boolean; // a GIF, kept as a video
 }
 
 // One request per link while the app is open; the server keeps them for hours as well.

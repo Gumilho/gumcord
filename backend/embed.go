@@ -52,8 +52,9 @@ type embed struct {
 	Image       string `json:"image,omitempty"` // through the image proxy
 	Large       bool   `json:"large,omitempty"` // the page asks for a big picture (videos, articles)
 	Color       string `json:"color,omitempty"`
-	// A player to show in the chat (YouTube, Vimeo), or for kind "video" the file itself.
-	Video string `json:"video,omitempty"`
+	Player string `json:"player,omitempty"` // a video player to frame in the chat (YouTube, Vimeo)
+	Video  string `json:"video,omitempty"`  // a video file to play in the chat's own player (X posts, video links)
+	Loop   bool   `json:"loop,omitempty"`   // a GIF, which X keeps as a video
 }
 
 // ── Fetching only from the public internet ──
@@ -149,6 +150,12 @@ func embedGet(ctx context.Context, target, accept string) (*http.Response, error
 // ── Reading a page ──
 
 func fetchEmbed(ctx context.Context, target string) (*embed, error) {
+	// X shows its posts only to a few crawlers it knows; its embed feed has what a preview needs.
+	if u, err := url.Parse(target); err == nil {
+		if id := tweetID(u); id != "" {
+			return fetchTweet(ctx, target, id)
+		}
+	}
 	res, err := embedGet(ctx, target, "text/html,application/xhtml+xml;q=0.9,image/*;q=0.8")
 	if err != nil {
 		return nil, err
@@ -202,9 +209,9 @@ func fetchEmbed(ctx context.Context, target string) (*embed, error) {
 	card := first("twitter:card")
 	e.Large = e.Image != "" && (card == "summary_large_image" || card == "player")
 	if u, err := url.Parse(target); err == nil {
-		e.Video = videoPlayer(u, first("og:video:url", "og:video:secure_url", "og:video"))
+		e.Player = videoPlayer(u, first("og:video:url", "og:video:secure_url", "og:video"))
 	}
-	if e.Video != "" && e.Image != "" {
+	if e.Player != "" && e.Image != "" {
 		e.Large = true
 	}
 	if c := first("theme-color"); cssColor.MatchString(c) {

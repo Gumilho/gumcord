@@ -5,6 +5,9 @@
     <link rel="icon" href="%sveltekit.assets%/icon.svg" type="image/svg+xml" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Nothing the app loads or links to learns it came from here. X's video server also refuses
+         requests from other sites' pages. (YouTube's frame asks for our origin itself.) -->
+    <meta name="referrer" content="no-referrer" />
     <title>Gumcord</title>
     <!-- Global styles live here (not in a component) so they apply before the app bundle loads. -->
     <style>

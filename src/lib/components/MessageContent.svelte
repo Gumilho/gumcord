@@ -39,16 +39,19 @@
           {#if e.title}<a class="embed-title" href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a>{/if}
           {#if e.description}<p class="embed-description">{e.description}</p>{/if}
         </div>
-        {#if e.video && playing.has(url)}
+        {#if e.player && playing.has(url)}
           <iframe
             class="embed-player"
-            src={e.video}
+            src={e.player}
             title={e.title ?? t("Video")}
             allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
             allowfullscreen
             referrerpolicy="strict-origin-when-cross-origin"
           ></iframe>
-        {:else if e.video && e.image}
+        {:else if e.video && playing.has(url)}
+          <!-- svelte-ignore a11y_media_has_caption -->
+          <video class="embed-player" src={e.video} controls autoplay playsinline loop={e.loop} muted={e.loop}></video>
+        {:else if (e.player || e.video) && e.image}
           <button class="embed-image play" type="button" aria-label={t("Play {title}", { title: e.title ?? t("Video") })} onclick={() => (playing = new Set(playing).add(url))}>
             <img src={e.image} alt="" loading="lazy" onload={onresize} />
             <span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11.04-6.86a1 1 0 0 0 0-1.72L9.5 4.28A1 1 0 0 0 8 5.14Z" /></svg></span>
@@ -122,12 +125,12 @@
 
   .embed-site {
     color: #8a90b4;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .embed-title {
     color: #a78bfa;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
     line-height: 1.3;
     text-decoration: none;
@@ -140,7 +143,7 @@
     margin: 0;
     overflow: hidden;
     color: #b4b9d6;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.45;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 4;
@@ -171,6 +174,12 @@
     border: none;
     border-radius: 4px;
     background: #000;
+  }
+
+  /* Videos we play ourselves keep their own shape: X has portrait and square ones too. */
+  video.embed-player {
+    aspect-ratio: auto;
+    max-height: 360px;
   }
 
   .embed-video-file {

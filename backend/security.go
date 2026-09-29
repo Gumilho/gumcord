@@ -15,7 +15,7 @@ func secureHeaders(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		// Uploads and proxied pictures replace this with their own, stricter policy.
 		h.Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Referrer-Policy", "no-referrer") // see app.html
 		h.Set("Permissions-Policy", "geolocation=(), payment=(), usb=()")
 		if https {
 			h.Set("Strict-Transport-Security", "max-age=31536000")
