@@ -275,7 +275,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(in.AttachmentURL, "/files/") || strings.Contains(in.AttachmentURL, "..") {
 			in.AttachmentURL, in.AttachmentType = "", ""
 		}
-		if in.AttachmentType != "image" && in.AttachmentURL != "" {
+		if in.AttachmentType != "image" && in.AttachmentType != "video" && in.AttachmentURL != "" {
 			in.AttachmentType = "file"
 		}
 		if strings.TrimSpace(in.Content) == "" && in.AttachmentURL == "" {
@@ -363,6 +363,12 @@ func serveApp(dir string) http.Handler {
 const maxUploadSize = 25 << 20
 
 // Sniffed image types and the extension they're stored under. Anything else is served as a download.
+// Videos play in the chat. (Go recognizes MP4 and WebM.)
+var videoExts = map[string]string{
+	"video/mp4":  ".mp4",
+	"video/webm": ".webm",
+}
+
 var imageExts = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
@@ -440,6 +446,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	kind, ext := "file", safeExt(header.Filename)
 	if e, ok := imageExts[mime]; ok {
 		kind, ext = "image", e
+	} else if e, ok := videoExts[mime]; ok {
+		kind, ext = "video", e
 	}
 
 	name := randHex(12) + ext

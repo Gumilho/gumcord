@@ -260,6 +260,9 @@
                   onload={onImageLoad}
                 />
               </button>
+            {:else if msg.attachment_url && msg.attachment_type === "video"}
+              <!-- svelte-ignore a11y_media_has_caption -->
+              <video class="msg-video" src={msg.attachment_url} controls preload="metadata" onloadedmetadata={onImageLoad}></video>
             {:else if msg.attachment_url}
               <a class="msg-file" href={msg.attachment_url} target="_blank" rel="noreferrer">
                 <Icon name="file" size={16} />
@@ -810,6 +813,15 @@
   .lightbox-link:hover {
     opacity: 1;
     text-decoration: underline;
+  }
+
+  .msg-video {
+    display: block;
+    max-width: min(400px, 100%);
+    max-height: 300px;
+    margin-top: 4px;
+    border-radius: 8px;
+    background: #000;
   }
 
   .msg-image {

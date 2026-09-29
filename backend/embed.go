@@ -45,13 +45,15 @@ const (
 
 type embed struct {
 	URL         string `json:"url"`
-	Kind        string `json:"kind"` // "page", or "image" for a link straight to a picture
+	Kind        string `json:"kind"` // "page", or "image"/"video" for a link straight to a picture or video file
 	Site        string `json:"site,omitempty"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 	Image       string `json:"image,omitempty"` // through the image proxy
 	Large       bool   `json:"large,omitempty"` // the page asks for a big picture (videos, articles)
 	Color       string `json:"color,omitempty"`
+	// A player to show in the chat (YouTube, Vimeo), or for kind "video" the file itself.
+	Video string `json:"video,omitempty"`
 }
 
 // ── Fetching only from the public internet ──
@@ -158,6 +160,10 @@ func fetchEmbed(ctx context.Context, target string) (*embed, error) {
 	if _, ok := imageExts[mediaType]; ok {
 		return &embed{URL: target, Kind: "image", Image: proxiedImage(final.String())}, nil
 	}
+	if videoTypes[mediaType] {
+		// Played from its own site, and only once someone presses play (nothing is preloaded).
+		return &embed{URL: target, Kind: "video", Video: final.String()}, nil
+	}
 	if mediaType != "text/html" && mediaType != "application/xhtml+xml" {
 		return nil, nil
 	}
@@ -195,6 +201,12 @@ func fetchEmbed(ctx context.Context, target string) (*embed, error) {
 	}
 	card := first("twitter:card")
 	e.Large = e.Image != "" && (card == "summary_large_image" || card == "player")
+	if u, err := url.Parse(target); err == nil {
+		e.Video = videoPlayer(u, first("og:video:url", "og:video:secure_url", "og:video"))
+	}
+	if e.Video != "" && e.Image != "" {
+		e.Large = true
+	}
 	if c := first("theme-color"); cssColor.MatchString(c) {
 		e.Color = c
 	}
@@ -205,6 +217,48 @@ func fetchEmbed(ctx context.Context, target string) (*embed, error) {
 }
 
 var cssColor = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}){1,2}$`)
+
+// Video files browsers play (QuickTime ones when they hold H.264, as phones record).
+var videoTypes = map[string]bool{"video/mp4": true, "video/webm": true, "video/ogg": true, "video/quicktime": true}
+
+var (
+	youtubeID = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+	vimeoID   = regexp.MustCompile(`^/(\d+)/?$`)
+	seconds   = regexp.MustCompile(`^(\d+)s?$`)
+)
+
+// videoPlayer is the player to embed for a video page, or "". Only YouTube (its privacy-enhanced
+// player, which sets no cookies until you press play) and Vimeo: the app and the desktop shell
+// allow exactly these players in a frame.
+func videoPlayer(page *url.URL, ogVideo string) string {
+	host := strings.TrimPrefix(page.Hostname(), "www.")
+	switch host {
+	case "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be":
+		id := page.Query().Get("v")
+		if host == "youtu.be" {
+			id = strings.Trim(page.Path, "/")
+		} else if parts := strings.Split(strings.Trim(page.Path, "/"), "/"); len(parts) == 2 && (parts[0] == "shorts" || parts[0] == "live" || parts[0] == "embed") {
+			id = parts[1]
+		}
+		if !youtubeID.MatchString(id) {
+			return ""
+		}
+		player := "https://www.youtube-nocookie.com/embed/" + id + "?autoplay=1"
+		if m := seconds.FindStringSubmatch(page.Query().Get("t")); m != nil {
+			player += "&start=" + m[1]
+		}
+		return player
+	case "vimeo.com":
+		if m := vimeoID.FindStringSubmatch(page.Path); m != nil {
+			return "https://player.vimeo.com/video/" + m[1] + "?autoplay=1"
+		}
+	}
+	// Other sites name their own player; only these two are allowed in a frame.
+	if u, err := url.Parse(ogVideo); err == nil && u.Scheme == "https" && u.Hostname() == "player.vimeo.com" {
+		return u.String()
+	}
+	return ""
+}
 
 // readHead collects a page's <meta> tags (by property, name or itemprop) and its <title>.
 func readHead(r io.Reader) (map[string]string, string) {

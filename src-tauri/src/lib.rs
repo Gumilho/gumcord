@@ -2,6 +2,9 @@ use tauri::utils::config::FrontendDist;
 use tauri::webview::{NewWindowResponse, PermissionKind, PermissionResponse};
 use tauri::{AppHandle, Manager, WebviewWindowBuilder};
 
+// The only players the site embeds (see videoPlayer in the backend's embed.go).
+const VIDEO_PLAYERS: [&str; 2] = ["https://www.youtube-nocookie.com/embed/", "https://player.vimeo.com/video/"];
+
 // The desktop app is a window onto the Gumcord site (build.frontendDist). The site does all the
 // work, so app updates ship with the server and friends never need to reinstall.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -42,6 +45,10 @@ pub fn run() {
                 // Tells the site it's in the app: passkeys don't work in webviews, so it signs in through the browser.
                 .initialization_script("window.gumcordDesktop = true;")
                 .on_navigation(move |url| {
+                    // Video players in the chat load in a frame, and WebKitGTK asks about frames here too.
+                    if VIDEO_PLAYERS.iter().any(|p| url.as_str().starts_with(p)) {
+                        return true;
+                    }
                     let own = url.scheme() == "about" || own_origins.contains(&url.origin());
                     if !own {
                         let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);

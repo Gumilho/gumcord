@@ -2,13 +2,14 @@
 
 export interface Embed {
   url: string;
-  kind: "page" | "image";
+  kind: "page" | "image" | "video";
   site?: string;
   title?: string;
   description?: string;
   image?: string;
   large?: boolean;
   color?: string;
+  video?: string; // a player to embed (YouTube, Vimeo), or for kind "video" the file
 }
 
 // One request per link while the app is open; the server keeps them for hours as well.

@@ -11,7 +11,7 @@ export type ChannelKind = "text" | "voice";
 // Servers group channels. Admins see every server; everyone else, the ones they've been added to.
 export interface Server { id: number; name: string; icon: string; }
 export interface Channel { id: number; server_id: number; name: string; kind: ChannelKind; }
-type AttachmentType = "image" | "file";
+type AttachmentType = "image" | "video" | "file";
 export interface Message {
   id: number; channel_id: number; author_id: number; author: string; content: string; created_at: string;
   edited_at?: string; attachment_url?: string; attachment_type?: AttachmentType;

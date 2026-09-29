@@ -14,6 +14,8 @@
 
   const pieces = $derived(parseMessage(content, store.emoteMap));
   const previews = $derived(previewLinks(pieces));
+  // Players only load once pressed: nothing reaches the video's site before that.
+  let playing = $state(new Set<string>());
 </script>
 
 {#if content}
@@ -27,6 +29,9 @@
       <button class="embed-picture" type="button" aria-label={t("View image")} onclick={() => onview(e.image!)}>
         <img src={e.image} alt="" loading="lazy" onload={onresize} {@attach onresize} />
       </button>
+    {:else if e?.kind === "video" && e.video}
+      <!-- svelte-ignore a11y_media_has_caption -->
+      <video class="embed-video-file" src={e.video} controls preload="none" {@attach onresize}></video>
     {:else if e}
       <div class="embed" class:large={e.large} style:--accent={e.color} {@attach onresize}>
         <div class="embed-text">
@@ -34,7 +39,21 @@
           {#if e.title}<a class="embed-title" href={e.url} target="_blank" rel="noreferrer noopener">{e.title}</a>{/if}
           {#if e.description}<p class="embed-description">{e.description}</p>{/if}
         </div>
-        {#if e.image}
+        {#if e.video && playing.has(url)}
+          <iframe
+            class="embed-player"
+            src={e.video}
+            title={e.title ?? t("Video")}
+            allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+            allowfullscreen
+            referrerpolicy="strict-origin-when-cross-origin"
+          ></iframe>
+        {:else if e.video && e.image}
+          <button class="embed-image play" type="button" aria-label={t("Play {title}", { title: e.title ?? t("Video") })} onclick={() => (playing = new Set(playing).add(url))}>
+            <img src={e.image} alt="" loading="lazy" onload={onresize} />
+            <span class="play-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="28" height="28"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.5.86l11.04-6.86a1 1 0 0 0 0-1.72L9.5 4.28A1 1 0 0 0 8 5.14Z" /></svg></span>
+          </button>
+        {:else if e.image}
           <a class="embed-image" href={e.url} target="_blank" rel="noreferrer noopener" tabindex="-1">
             <img src={e.image} alt="" loading="lazy" onload={onresize} />
           </a>
@@ -143,6 +162,49 @@
     max-height: 300px;
     object-fit: contain;
   }
+
+  .embed-player, .embed-video-file {
+    display: block;
+    width: 100%;
+    max-width: min(400px, 100%);
+    aspect-ratio: 16 / 9;
+    border: none;
+    border-radius: 4px;
+    background: #000;
+  }
+
+  .embed-video-file {
+    margin-top: 4px;
+    max-height: 300px;
+  }
+
+  .embed-image.play {
+    position: relative;
+    display: block;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+  }
+
+  .play-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    padding-left: 4px;
+    border-radius: 50%;
+    background: #000a;
+    color: #fff;
+    transform: translate(-50%, -50%);
+    transition: background 0.15s;
+  }
+
+  .embed-image.play:hover .play-icon { background: #5b40c2; }
 
   .embed-picture {
     align-self: flex-start;
