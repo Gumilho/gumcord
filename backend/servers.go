@@ -77,6 +77,7 @@ func serverAudience(serverID int64) func(user) bool {
 // only gets back what it may see; the event itself carries nothing.
 func notifyServersChanged() {
 	hub.broadcastRaw([]byte(`{"type":"servers"}`))
+	hub.broadcastOnline() // who shares a server with whom may have changed
 	presence.invalidate() // who may see which voice channel may have changed too
 }
 

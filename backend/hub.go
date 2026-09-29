@@ -62,7 +62,7 @@ func (h *wsHub) add(conn *websocket.Conn, u user) bool {
 	h.mu.Unlock()
 
 	if changed {
-		h.broadcastRaw(h.onlineMsg())
+		h.broadcastOnline()
 	}
 	return true
 }
@@ -87,7 +87,7 @@ func (h *wsHub) remove(conn *websocket.Conn) {
 		}
 		h.mu.Unlock()
 		if gone {
-			h.broadcastRaw(h.onlineMsg())
+			h.broadcastOnline()
 		}
 	})
 }
@@ -106,16 +106,19 @@ func (h *wsHub) updateUser(u user) {
 	}
 	h.mu.Unlock()
 	if o != nil {
-		h.broadcastRaw(h.onlineMsg())
+		h.broadcastOnline()
 	}
 }
 
-// onlineMsg lists everyone online, sorted by name.
-func (h *wsHub) onlineMsg() []byte {
+// onlineMsgFor lists who u may see online, sorted by name: people who share a server with them.
+func (h *wsHub) onlineMsgFor(u user) []byte {
+	peers := peersOf(u)
 	h.mu.Lock()
 	users := make([]user, 0, len(h.online))
-	for _, o := range h.online {
-		users = append(users, o.user)
+	for id, o := range h.online {
+		if peers == nil || peers[id] {
+			users = append(users, o.user)
+		}
 	}
 	h.mu.Unlock()
 	sort.Slice(users, func(i, j int) bool {
@@ -159,6 +162,43 @@ func (h *wsHub) broadcastTo(v any, allow func(user) bool) {
 			h.send(c, data)
 		}
 	})
+}
+
+// broadcastOnline sends every connection the people it may see online. Also after membership
+// changes, since those change who that is.
+func (h *wsHub) broadcastOnline() {
+	msgs := map[int64][]byte{}
+	h.each(func(c *websocket.Conn, u user) {
+		msg, ok := msgs[u.ID]
+		if !ok {
+			msg = h.onlineMsgFor(u)
+			msgs[u.ID] = msg
+		}
+		h.send(c, msg)
+	})
+}
+
+// peersOf is who u may see online: the people they share a server with, themselves included.
+// Admins see every server, so everyone (nil).
+func peersOf(u user) map[int64]bool {
+	if u.Admin {
+		return nil
+	}
+	peers := map[int64]bool{u.ID: true}
+	rows, err := db.Query(`
+		SELECT DISTINCT theirs.user_id FROM server_members mine
+		JOIN server_members theirs ON theirs.server_id = mine.server_id
+		WHERE mine.user_id = ?`, u.ID)
+	if err != nil {
+		return peers
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		rows.Scan(&id)
+		peers[id] = true
+	}
+	return peers
 }
 
 func (h *wsHub) broadcastRaw(data []byte) {

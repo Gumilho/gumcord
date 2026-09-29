@@ -257,7 +257,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// Who's online and who's in voice right now; later changes arrive as broadcasts.
-	hub.send(conn, hub.onlineMsg())
+	hub.send(conn, hub.onlineMsgFor(u))
 	if snap := presence.snapshotFor(u); snap != nil {
 		hub.send(conn, snap)
 	}
@@ -461,6 +461,7 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 		tooMany(w)
 		return
 	}
+	uploadDeadline(w)
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 	if err := r.ParseMultipartForm(uploadMemory); err != nil {
 		http.Error(w, "file missing or too large", http.StatusRequestEntityTooLarge)

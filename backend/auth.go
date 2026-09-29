@@ -121,13 +121,22 @@ func parseToken(raw, audience string, c jwt.Claims) bool {
 
 // --- sessions ---
 
-func setSession(w http.ResponseWriter, userID int64) {
+// Sessions are kept in the database as well as signed into the cookie, so signing out really ends
+// one: a copied cookie stops working then, not when it would have expired.
+func setSession(w http.ResponseWriter, userID int64) error {
+	now := time.Now()
+	db.Exec(`DELETE FROM sessions WHERE expires < ?`, now.Unix()) // tidy up expired ones
 	c := registered("session", sessionTTL)
+	c.ID = randHex(32)
 	c.Subject = strconv.FormatInt(userID, 10)
+	if _, err := db.Exec(`INSERT INTO sessions (id, user_id, expires) VALUES (?, ?, ?)`, c.ID, userID, now.Add(sessionTTL).Unix()); err != nil {
+		return err
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: signToken(c), Path: "/",
 		MaxAge: int(sessionTTL.Seconds()), HttpOnly: true, Secure: cookieSecure, SameSite: http.SameSiteLaxMode,
 	})
+	return nil
 }
 
 func sessionUser(r *http.Request) (user, bool) {
@@ -142,6 +151,10 @@ func sessionUser(r *http.Request) (user, bool) {
 	id, err := strconv.ParseInt(c.Subject, 10, 64)
 	if err != nil {
 		return user{}, false
+	}
+	var live int
+	if c.ID == "" || db.QueryRow(`SELECT 1 FROM sessions WHERE id = ? AND user_id = ? AND expires > ?`, c.ID, id, time.Now().Unix()).Scan(&live) != nil {
+		return user{}, false // signed out, or from before sessions were kept
 	}
 	u, err := profile(id)
 	return u, err == nil
@@ -167,6 +180,12 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(sessionCookie); err == nil {
+		var c jwt.RegisteredClaims
+		if parseToken(cookie.Value, "session", &c) && c.ID != "" {
+			db.Exec(`DELETE FROM sessions WHERE id = ?`, c.ID)
+		}
+	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Path: "/", MaxAge: -1})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -343,7 +362,10 @@ func handleDevLogin(w http.ResponseWriter, r *http.Request) {
 // finishLogin signs this browser in, or for a desktop sign-in, asks the user to confirm handing the session to the app.
 func finishLogin(w http.ResponseWriter, r *http.Request, u user, desktop string) {
 	if desktop == "" {
-		setSession(w, u.ID)
+		if err := setSession(w, u.ID); err != nil {
+			serverError(w, err)
+			return
+		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -500,7 +522,10 @@ func handleDesktopPoll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]string{"status": "pending"})
 		return
 	}
-	setSession(w, userID)
+	if err := setSession(w, userID); err != nil {
+		serverError(w, err)
+		return
+	}
 	writeJSON(w, map[string]string{"status": "done"})
 }
 

@@ -52,9 +52,9 @@ type embed struct {
 	Image       string `json:"image,omitempty"` // through the image proxy
 	Large       bool   `json:"large,omitempty"` // the page asks for a big picture (videos, articles)
 	Color       string `json:"color,omitempty"`
-	Player string `json:"player,omitempty"` // a video player to frame in the chat (YouTube, Vimeo)
-	Video  string `json:"video,omitempty"`  // a video file to play in the chat's own player (X posts, video links)
-	Loop   bool   `json:"loop,omitempty"`   // a GIF, which X keeps as a video
+	Player      string `json:"player,omitempty"` // a video player to frame in the chat (YouTube, Vimeo)
+	Video       string `json:"video,omitempty"`  // a video file to play in the chat's own player (X posts, video links)
+	Loop        bool   `json:"loop,omitempty"`   // a GIF, which X keeps as a video
 }
 
 // ── Fetching only from the public internet ──
