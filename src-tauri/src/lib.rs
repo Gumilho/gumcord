@@ -64,12 +64,40 @@ pub fn run() {
 
             #[cfg(target_os = "linux")]
             enable_webrtc(&window)?;
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(windows)]
+            color_title_bar(&window);
+            #[cfg(not(any(target_os = "linux", windows)))]
             let _ = window;
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// The title bar in the app's colours: the window's dark theme covers Windows 10, and Windows 11
+// also takes the exact colour of the server list (older versions ignore these attributes).
+#[cfg(windows)]
+fn color_title_bar(window: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    // COLORREF is 0x00BBGGRR.
+    let rgb = |r: u32, g: u32, b: u32| r | g << 8 | b << 16;
+    for (attribute, color) in [
+        (DWMWA_CAPTION_COLOR, rgb(0x14, 0x15, 0x26)),
+        (DWMWA_BORDER_COLOR, rgb(0x14, 0x15, 0x26)),
+        (DWMWA_TEXT_COLOR, rgb(0xc8, 0xcc, 0xe8)),
+    ] {
+        unsafe {
+            DwmSetWindowAttribute(
+                hwnd.0,
+                attribute as u32,
+                &color as *const u32 as *const core::ffi::c_void,
+                std::mem::size_of::<u32>() as u32,
+            );
+        }
+    }
 }
 
 // WebKitGTK ships with microphone access and WebRTC switched off.
