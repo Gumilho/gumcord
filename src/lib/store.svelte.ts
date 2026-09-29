@@ -2,7 +2,7 @@ import {
   ConnectionQuality, DisconnectReason, Room, RoomEvent, Track,
   type Participant, type RemoteParticipant, type RemoteTrackPublication,
 } from "livekit-client";
-import { audioContext, audioRunning, resumeAudio } from "./audio.ts";
+import { audioContext, audioRunning, resumeAudio, setOutputDevice } from "./audio.ts";
 import { SpeakingDetector } from "./speaking.ts";
 import { playSound, preloadSounds } from "./sounds.ts";
 
@@ -43,6 +43,10 @@ export const isDesktop = "gumcordDesktop" in window;
 const SIGNED_OUT_KEY = "gc_signed_out";
 // Whether the member list is shown, remembered per device.
 const MEMBERS_KEY = "gc_members";
+// Chosen microphone and speakers, remembered per device. Missing means the system default.
+const DEVICES_KEY = "gc_devices";
+export type AudioDeviceKind = "audioinput" | "audiooutput";
+type DevicePrefs = Partial<Record<AudioDeviceKind, string>>;
 
 const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
@@ -86,6 +90,17 @@ const sameParticipants = (a: VoiceParticipant[], b: VoiceParticipant[]) =>
 const sameStreams = (a: ScreenStream[], b: ScreenStream[]) =>
   a.length === b.length
   && a.every((s, i) => s.identity === b[i].identity && s.track === b[i].track && s.loading === b[i].loading);
+
+function loadDevicePrefs(): DevicePrefs {
+  try {
+    const prefs: DevicePrefs = JSON.parse(localStorage.getItem(DEVICES_KEY) ?? "{}") ?? {};
+    // Applied to the shared audio context once it exists.
+    if (prefs.audiooutput) void setOutputDevice(prefs.audiooutput);
+    return prefs;
+  } catch {
+    return {};
+  }
+}
 
 class GumcordStore {
   // auth: the session is an HttpOnly cookie, so the server's answer to /me is the only source of truth
@@ -131,6 +146,7 @@ class GumcordStore {
   // Everyone with the app open, sorted by name; pushed by the server.
   online:            User[]               = $state.raw([]);
   showMembers                             = $state(localStorage.getItem(MEMBERS_KEY) !== "0");
+  devices:           DevicePrefs          = $state(loadDevicePrefs());
   // Who is in each voice channel (by channel ID), pushed by the server. Replaced wholesale on change.
   voiceRooms:        ReadonlyMap<number, VoiceMember[]> = $state.raw(new Map());
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
@@ -537,6 +553,14 @@ class GumcordStore {
     };
   }
 
+  // Takes effect at once, in a call too; new joins and mic re-enables use it as well.
+  async setDevice(kind: AudioDeviceKind, deviceId: string) {
+    this.devices = { ...this.devices, [kind]: deviceId };
+    localStorage.setItem(DEVICES_KEY, JSON.stringify(this.devices));
+    if (kind === "audiooutput") await setOutputDevice(deviceId);
+    else await this.room?.switchActiveDevice(kind, deviceId).catch((err) => console.warn("Couldn't switch microphone:", err));
+  }
+
   toggleMembers() {
     this.showMembers = !this.showMembers;
     localStorage.setItem(MEMBERS_KEY, this.showMembers ? "1" : "0");
@@ -612,6 +636,7 @@ class GumcordStore {
       // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
       adaptiveStream: true,
       dynacast: true,
+      audioCaptureDefaults: { deviceId: this.devices.audioinput },
       // Plays everyone through gain nodes on the shared context: per-person volume can go past 100%.
       webAudioMix: { audioContext: audioContext() },
     });

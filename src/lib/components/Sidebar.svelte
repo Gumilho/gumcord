@@ -6,6 +6,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
   import ServerSettings from "$lib/components/ServerSettings.svelte";
+  import UserSettings from "$lib/components/UserSettings.svelte";
 
   type MenuItem = { label: string; action: () => void; danger?: boolean };
   type MenuState = { x: number; y: number; items: MenuItem[] };
@@ -82,6 +83,7 @@
 
   let menu: MenuState | null = $state(null);
   let settingsOpen = $state(false);
+  let userSettingsOpen = $state(false);
   let creating: ChannelKind | null = $state(null);
   let createName = $state('');
 
@@ -337,6 +339,10 @@
         <VoiceIcon kind="headphones" slashed={store.voiceDeafened} />
       </button>
     {/if}
+
+    <button class="icon-btn" aria-label="User settings" use:tooltip={"User settings"} onclick={() => (userSettingsOpen = true)}>
+      <Icon name="settings" />
+    </button>
   </div>
 </aside>
 
@@ -380,6 +386,10 @@
       </button>
     {/each}
   </div>
+{/if}
+
+{#if userSettingsOpen}
+  <UserSettings onclose={() => (userSettingsOpen = false)} />
 {/if}
 
 {#if settingsOpen && store.activeServer}
