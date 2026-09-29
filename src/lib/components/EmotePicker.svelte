@@ -196,6 +196,10 @@
     grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
     gap: 4px;
     max-height: 220px;
+    /* Room for the remove buttons that sit over the tiles' corners, so they never make it scroll sideways. */
+    margin: -4px;
+    padding: 4px;
+    overflow-x: hidden;
     overflow-y: auto;
   }
 
