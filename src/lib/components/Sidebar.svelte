@@ -121,6 +121,10 @@
   function onChannelContext(e: MouseEvent, ch: Channel) {
     e.stopPropagation();
     const items: MenuItem[] = [];
+    if (ch.kind === 'text') {
+      const muted = store.mutedChannels.has(ch.id);
+      items.push({ label: t(muted ? 'Unmute Channel' : 'Mute Channel'), action: () => store.toggleChannelMute(ch.id) });
+    }
     if (ch.kind === 'voice') {
       items.push(...(store.voiceChannel?.id === ch.id
         ? [
@@ -214,11 +218,15 @@
         <button
           class="channel-row"
           class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
+          class:muted={store.mutedChannels.has(ch.id)}
           onclick={() => { void store.selectChannel(ch); showMain(); }}
           oncontextmenu={(e) => onChannelContext(e, ch)}
         >
           <span class="ch-icon"><Icon name="hash" size={18} /></span>
           <span class="ch-name">{ch.name}</span>
+          {#if store.mutedChannels.has(ch.id)}
+            <span class="ch-muted" role="img" aria-label={t("Channel muted")}><VoiceIcon kind="bell" slashed size={16} /></span>
+          {/if}
         </button>
         {@render channelGear(ch)}
       </div>
@@ -644,6 +652,15 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+  }
+
+  /* Muted channels fade back, unless open or pointed at. */
+  .channel-row.muted:not(.active, :hover) { opacity: 0.55; }
+
+  .ch-muted {
+    display: flex;
+    flex-shrink: 0;
+    color: #6b7290;
   }
 
   .voice-channel.in-voice { color: #a78bfa; }

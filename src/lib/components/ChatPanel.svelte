@@ -5,6 +5,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
   import MemberListToggle from "$lib/components/MemberListToggle.svelte";
+  import VoiceIcon from "$lib/components/VoiceIcon.svelte";
   import MessageContent from "$lib/components/MessageContent.svelte";
   import EmotePicker from "$lib/components/EmotePicker.svelte";
   import BackButton from "$lib/components/BackButton.svelte";
@@ -18,6 +19,9 @@
   let fileInput: HTMLInputElement | null = $state(null);
   let textarea: HTMLTextAreaElement | null = $state(null);
   let viewing: string | null = $state(null);
+
+  // A muted channel's new messages make no sound.
+  const channelMuted = $derived(!!store.activeChannel && store.mutedChannels.has(store.activeChannel.id));
 
   // Grow the textarea with its content (also shrinks back after send clears the draft).
   $effect(() => {
@@ -212,6 +216,16 @@
   <header class="main-header">
     <BackButton />
     <span class="header-title"># {store.activeChannel.name}</span>
+    <button
+      class="mute-toggle"
+      type="button"
+      aria-label={t("Mute channel")}
+      aria-pressed={channelMuted}
+      use:tooltip={t(channelMuted ? "Unmute channel" : "Mute channel")}
+      onclick={() => store.activeChannel && store.toggleChannelMute(store.activeChannel.id)}
+    >
+      <VoiceIcon kind="bell" slashed={channelMuted} />
+    </button>
     <MemberListToggle />
   </header>
 
@@ -429,6 +443,20 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* Like the member list toggle beside it, but kept on phones. */
+  .mute-toggle {
+    display: flex;
+    padding: 4px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: #8a90b4;
+    cursor: pointer;
+    transition: color 0.1s;
+  }
+
+  .mute-toggle:hover { color: #e4e6f5; }
 
   .chat-body {
     flex: 1;

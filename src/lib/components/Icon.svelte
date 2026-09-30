@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  // 24×24 icon paths shared across components. VoiceIcon covers the animated mic/headphones.
+  // 24×24 icon paths shared across components. VoiceIcon covers the animated mic, headphones and bell.
   interface IconDef { d: string | string[]; evenodd?: boolean; }
 
   const ICONS = {

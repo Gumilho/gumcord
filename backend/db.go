@@ -81,6 +81,7 @@ var migrations = []func(*sql.Tx) error{
 	migrateMessageEdits,
 	migrateStickers,
 	migrateSessions,
+	migrateChannelMutes,
 }
 
 func migrate() {
@@ -260,4 +261,16 @@ func upsertUser(subject, name, avatar string, admin bool) (user, error) {
 		return user{}, err
 	}
 	return profile(id)
+}
+
+// migrateChannelMutes lets people silence a channel's new-message sound. Only muted channels are
+// stored, and they go with the channel.
+func migrateChannelMutes(tx *sql.Tx) error {
+	_, err := tx.Exec(`
+		CREATE TABLE channel_mutes (
+			user_id    INTEGER NOT NULL REFERENCES users(id),
+			channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+			PRIMARY KEY (user_id, channel_id)
+		)`)
+	return err
 }

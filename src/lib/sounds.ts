@@ -5,7 +5,7 @@ import { audioContext } from "./audio.ts";
 
 const files = import.meta.glob<string>("/assets/*.mp3", { eager: true, query: "?url", import: "default" });
 
-export type SoundName = "connect" | "disconnect" | "mute" | "unmute" | "deafen" | "undeafen";
+export type SoundName = "connect" | "disconnect" | "mute" | "unmute" | "deafen" | "undeafen" | "ping";
 
 const VOLUME = 0.5;
 // If the context is still waiting on a user gesture, drop the sound rather than play it late.

@@ -77,6 +77,9 @@ const SOUND_URL          = /^\/files\/sound-[0-9a-f]{24}\.(?:mp3|wav|ogg)$/;
 const SOUND_COOLDOWN_MS  = 1_000;
 const SOUND_VOLUME_KEY   = "gc_soundboard_volume";
 
+// A burst of new messages pings once.
+const PING_GAP_MS = 1_000;
+
 function loadSoundboardVolume() {
   const v = Number(localStorage.getItem(SOUND_VOLUME_KEY) ?? "0.5");
   return Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 0.5;
@@ -217,6 +220,8 @@ class GumcordStore {
   voiceRooms:        ReadonlyMap<number, VoiceMember[]> = $state.raw(new Map());
   // Per-person volume and mute, by identity (user ID). Replaced wholesale on change.
   userAudio:         ReadonlyMap<string, UserAudio> = $state.raw(new Map());
+  // Channels whose new messages make no sound. Replaced wholesale on change.
+  mutedChannels:     ReadonlySet<number>  = $state.raw(new Set());
   // The per-person audio menu, opened by right-clicking someone in the call.
   userMenu: { identity: string; name: string; kind: AudioKind; x: number; y: number } | null = $state(null);
   screenSharing                           = $derived(this.streams.some((s) => s.local));
@@ -239,6 +244,8 @@ class GumcordStore {
   #userAudioSaves = new Map<string, ReturnType<typeof setTimeout>>();
   // When you, and each person in the call, last played a sound.
   #soundPlayed = new Map<string, number>();
+  // When a new message last pinged.
+  #lastPing = 0;
   // Push-to-talk key held (or within the release delay).
   #pttHeld = false;
   #pttRelease: ReturnType<typeof setTimeout> | undefined;
@@ -312,6 +319,7 @@ class GumcordStore {
     this.channels      = [];
     this.messages      = [];
     this.userAudio     = new Map();
+    this.mutedChannels = new Set();
     this.voiceRooms    = new Map();
     this.online        = [];
     this.#justLeft     = null;
@@ -354,6 +362,7 @@ class GumcordStore {
     const loading = server ? this.selectServer(server) : undefined;
     void preloadSounds();
     this.#userAudioLoaded = this.#loadUserAudio();
+    void this.#loadMutedChannels();
     this.#openWS();
     this.#restoreVoice();
     await loading;
@@ -788,6 +797,7 @@ class GumcordStore {
       if (this.activeChannel && msg.channel_id === this.activeChannel.id) {
         this.messages = [...this.messages, msg];
       }
+      this.#pingFor(msg);
     };
 
     this.#ws.onclose = () => {
@@ -1148,6 +1158,46 @@ class GumcordStore {
     this.room?.remoteParticipants.forEach((p) => this.#applyUserAudio(p));
     this.#publishDeafened();
     this.#updateParticipants(this.room);
+  }
+
+  // ── New-message sound ─────────────────────────────────────
+
+  // Someone else's message pings, in any channel, unless it's muted or you're reading it right now.
+  #pingFor(msg: Message) {
+    if (msg.author_id === this.me?.id || this.mutedChannels.has(msg.channel_id)) return;
+    if (this.mainView === "chat" && this.activeChannel?.id === msg.channel_id && document.hasFocus()) return;
+    const now = Date.now();
+    if (now - this.#lastPing < PING_GAP_MS) return;
+    this.#lastPing = now;
+    playSound("ping");
+  }
+
+  async #loadMutedChannels() {
+    try {
+      const res = await this.#api("/channel-mutes");
+      if (res.ok) this.mutedChannels = new Set(await res.json());
+    } catch (err) {
+      console.warn("Couldn't load muted channels:", err);
+    }
+  }
+
+  // Saved on the server, so it follows you to your other devices. Undone if saving fails.
+  toggleChannelMute(id: number) {
+    const muted = !this.mutedChannels.has(id);
+    this.#setChannelMuted(id, muted);
+    this.#api(`/channel-mutes/${id}`, { method: muted ? "PUT" : "DELETE" })
+      .then((res) => { if (!res.ok) throw new Error(`status ${res.status}`); })
+      .catch((err) => {
+        console.warn("Couldn't save channel mute:", err);
+        this.#setChannelMuted(id, !muted);
+      });
+  }
+
+  #setChannelMuted(id: number, muted: boolean) {
+    const next = new Set(this.mutedChannels);
+    if (muted) next.add(id);
+    else next.delete(id);
+    this.mutedChannels = next;
   }
 
   // ── Per-person audio ──────────────────────────────────────

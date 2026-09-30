@@ -3,13 +3,14 @@
     kind,
     slashed,
     size = 20,
-  }: { kind: "mic" | "headphones"; slashed: boolean; size?: number } = $props();
+  }: { kind: "mic" | "headphones" | "bell"; slashed: boolean; size?: number } = $props();
 
   const uid = $props.id();
   const maskId = `voice-icon-gap-${uid}`;
 </script>
 
-<!-- Geometry from Discord's mic/deafen animations. Slashing draws the line from the top-right and cuts a gap around it. -->
+<!-- Geometry from Discord's mic/deafen animations; the bell (a channel's message sound) matches them.
+     Slashing draws the line from the top-right and cuts a gap around it. -->
 <svg class:slashed width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
   <defs>
     <mask id={maskId} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
@@ -24,6 +25,9 @@
       <path d="M5 9.92c0 3.87 3.13 7 7 7s7-3.13 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
       <rect x="11" y="16.42" width="2" height="5" rx="0.5" fill="currentColor" />
       <rect x="8" y="19.92" width="8" height="2" rx="1" fill="currentColor" />
+    {:else if kind === "bell"}
+      <path fill="currentColor" d="M12 2a1.5 1.5 0 0 0-1.5 1.5v.7A6 6 0 0 0 6 10v5l-2 2v1h16v-1l-2-2v-5a6 6 0 0 0-4.5-5.8v-.7A1.5 1.5 0 0 0 12 2Z" />
+      <path fill="currentColor" d="M9.5 19h5a2.5 2.5 0 0 1-5 0Z" />
     {:else}
       <path
         transform="translate(12 12.3) scale(1.04)"
