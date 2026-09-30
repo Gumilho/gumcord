@@ -11,9 +11,13 @@
   import Soundboard from "$lib/components/Soundboard.svelte";
   import BackButton from "$lib/components/BackButton.svelte";
   import { t } from "$lib/i18n.svelte.ts";
+  import { mobile } from "$lib/mobile.svelte.ts";
 
   let soundboardBtn: HTMLButtonElement | null = $state(null);
   let soundboardOpen = $state(false);
+
+  // Expanded, the call fills the window: no header or member list here, no sidebars in the page.
+  const expanded = $derived(store.callExpanded && !mobile.narrow);
 
   const count = $derived(store.voiceParticipants.length + store.streams.length);
   const cols = $derived(count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
@@ -22,12 +26,15 @@
   // Streams you're watching take the stage, side by side, and everyone else moves to a strip
   // underneath. Clicking one focuses it alone; clicking again goes back to all of them. Your own
   // screen stays in the strip unless you focus it. A stream that ended or is no longer being
-  // watched simply stops matching.
+  // watched simply stops matching. Fullscreen takes the whole stage, so every stream on it stays
+  // the same size there too.
   let focusedId: string | null = $state(null);
+  let spotlightArea: HTMLElement | null = $state(null);
   const focused = $derived(
     store.streams.find((s) => s.identity === focusedId && (s.track || s.loading)) ?? null,
   );
-  const featured = $derived(focused ? [focused] : store.streams.filter((s) => !s.local && (s.track || s.loading)));
+  const watched = $derived(store.streams.filter((s) => !s.local && (s.track || s.loading)));
+  const featured = $derived(focused ? [focused] : watched);
   const tiledStreams = $derived(store.streams.filter((s) => !featured.includes(s)));
 
   function toggleFocus(s: ScreenStream) {
@@ -40,8 +47,10 @@
     focusedId = null;
   }
 
+  // Fullscreen ends with it, unless other streams are left on the fullscreen stage.
   function stopWatching(s: ScreenStream) {
-    if (document.fullscreenElement) void document.exitFullscreen();
+    const fs = document.fullscreenElement;
+    if (fs && !(fs === spotlightArea && watched.some((w) => w !== s))) void document.exitFullscreen();
     store.stopWatching(s.identity);
   }
 
@@ -62,10 +71,11 @@
     };
   }
 
-  function toggleFullscreen(e: MouseEvent) {
-    const tile = (e.currentTarget as HTMLElement).closest(".tile");
+  // A stream on the stage takes the whole stage with it; one in the strip goes alone.
+  function toggleFullscreen(e: MouseEvent, spotlight: boolean) {
+    const target = spotlight ? spotlightArea : (e.currentTarget as HTMLElement).closest(".tile");
     if (document.fullscreenElement) void document.exitFullscreen();
-    else void tile?.requestFullscreen().catch(() => {});
+    else void target?.requestFullscreen().catch(() => {});
   }
 
   function streamLabel(s: ScreenStream) {
@@ -74,12 +84,14 @@
 </script>
 
 <div class="call">
-  <header class="call-header">
-    <BackButton />
-    <span class="header-icon"><Icon name="speaker" /></span>
-    <span class="header-title">{store.voiceChannel?.name}</span>
-    <MemberListToggle />
-  </header>
+  {#if !expanded}
+    <header class="call-header">
+      <BackButton />
+      <span class="header-icon"><Icon name="speaker" /></span>
+      <span class="header-title">{store.voiceChannel?.name}</span>
+      <MemberListToggle />
+    </header>
+  {/if}
 
   {#snippet personTile(p: VoiceParticipant)}
     {@const clickable = !store.isMe(p.identity)}
@@ -146,7 +158,7 @@
               <Icon name="eyeOff" />
             </button>
           {/if}
-          <button class="tile-action" aria-label={t("Fullscreen")} use:tooltip={t("Fullscreen")} onclick={toggleFullscreen}>
+          <button class="tile-action" aria-label={t("Fullscreen")} use:tooltip={t("Fullscreen")} onclick={(e) => toggleFullscreen(e, spotlight)}>
             <Icon name="fullscreen" />
           </button>
         </div>
@@ -173,7 +185,7 @@
     <div class="call-column">
       <div class="stage" class:focus={featured.length > 0}>
         {#if featured.length}
-          <div class="spotlight-area">
+          <div class="spotlight-area" bind:this={spotlightArea}>
             <div class="featured" class:multi={featured.length > 1} style:--n={featured.length} style:--rows={Math.ceil(featured.length / 2)}>
               {#each featured as s (s.identity)}
                 {@render streamTile(s, true)}
@@ -192,62 +204,75 @@
       </div>
 
       <div class="controls">
-        <button class="ctrl" aria-disabled="true" aria-label={t("Turn on camera")} use:tooltip={t("Camera is coming soon")}>
-          <Icon name="camera" size={24} />
-        </button>
-        <button
-          class="ctrl"
-          class:sharing={store.screenSharing}
-          aria-disabled={!store.canScreenShare}
-          aria-pressed={store.screenSharing}
-          aria-label={store.shareLabel}
-          use:tooltip={store.shareLabel}
-          onclick={() => store.toggleScreenShare()}
-        >
-          <Icon name="screenShare" size={24} />
-        </button>
-        <button
-          class="ctrl"
-          aria-label={t("Soundboard")}
-          aria-expanded={soundboardOpen}
-          use:tooltip={t("Soundboard")}
-          bind:this={soundboardBtn}
-          onclick={() => (soundboardOpen = !soundboardOpen)}
-        >
-          <Icon name="soundboard" size={24} />
-        </button>
-        {#if soundboardOpen && soundboardBtn}
-          <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
+        <div class="controls-main">
+          <button class="ctrl" aria-disabled="true" aria-label={t("Turn on camera")} use:tooltip={t("Camera is coming soon")}>
+            <Icon name="camera" size={24} />
+          </button>
+          <button
+            class="ctrl"
+            class:sharing={store.screenSharing}
+            aria-disabled={!store.canScreenShare}
+            aria-pressed={store.screenSharing}
+            aria-label={store.shareLabel}
+            use:tooltip={store.shareLabel}
+            onclick={() => store.toggleScreenShare()}
+          >
+            <Icon name="screenShare" size={24} />
+          </button>
+          <button
+            class="ctrl"
+            aria-label={t("Soundboard")}
+            aria-expanded={soundboardOpen}
+            use:tooltip={t("Soundboard")}
+            bind:this={soundboardBtn}
+            onclick={() => (soundboardOpen = !soundboardOpen)}
+          >
+            <Icon name="soundboard" size={24} />
+          </button>
+          {#if soundboardOpen && soundboardBtn}
+            <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
+          {/if}
+
+          <span class="divider" aria-hidden="true"></span>
+
+          <button
+            class="ctrl"
+            class:off={store.voiceMuted}
+            aria-label={store.muteLabel}
+            aria-pressed={store.voiceMuted}
+            use:tooltip={store.muteLabel}
+            onclick={() => store.toggleMute()}
+          >
+            <VoiceIcon kind="mic" slashed={store.voiceMuted} size={24} />
+          </button>
+          <button
+            class="ctrl"
+            class:off={store.voiceDeafened}
+            aria-label={store.deafenLabel}
+            aria-pressed={store.voiceDeafened}
+            use:tooltip={store.deafenLabel}
+            onclick={() => store.toggleDeafen()}
+          >
+            <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
+          </button>
+          <button class="ctrl hangup" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
+            <Icon name="hangup" size={24} />
+          </button>
+        </div>
+        {#if !mobile.narrow}
+          <button
+            class="ctrl-side"
+            aria-label={t("Hide sidebars")}
+            aria-pressed={store.callExpanded}
+            use:tooltip={t(store.callExpanded ? "Show sidebars" : "Hide sidebars")}
+            onclick={() => (store.callExpanded = !store.callExpanded)}
+          >
+            <Icon name={store.callExpanded ? "collapse" : "expand"} size={22} />
+          </button>
         {/if}
-
-        <span class="divider" aria-hidden="true"></span>
-
-        <button
-          class="ctrl"
-          class:off={store.voiceMuted}
-          aria-label={store.muteLabel}
-          aria-pressed={store.voiceMuted}
-          use:tooltip={store.muteLabel}
-          onclick={() => store.toggleMute()}
-        >
-          <VoiceIcon kind="mic" slashed={store.voiceMuted} size={24} />
-        </button>
-        <button
-          class="ctrl"
-          class:off={store.voiceDeafened}
-          aria-label={store.deafenLabel}
-          aria-pressed={store.voiceDeafened}
-          use:tooltip={store.deafenLabel}
-          onclick={() => store.toggleDeafen()}
-        >
-          <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
-        </button>
-        <button class="ctrl hangup" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
-          <Icon name="hangup" size={24} />
-        </button>
       </div>
     </div>
-    {#if store.showMembers}
+    {#if store.showMembers && !expanded}
       <MemberList />
     {/if}
   </div>
@@ -374,6 +399,14 @@
     align-items: center;
     justify-content: center;
     container-type: size;
+  }
+
+  .spotlight-area:fullscreen {
+    background: #000;
+  }
+
+  .spotlight-area:fullscreen .tile {
+    border-radius: 0;
   }
 
   .featured {
@@ -584,14 +617,43 @@
 
   .tile-icon.muted-by-me { color: #f87171; }
 
-  /* ── Controls ── */
+  /* ── Controls: centred, with the expand toggle at the right end ── */
   .controls {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
-    gap: 12px;
     padding: 12px 16px 20px;
     flex-shrink: 0;
+  }
+
+  .controls-main {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .ctrl-side {
+    grid-column: 3;
+    justify-self: end;
+    display: flex;
+    padding: 9px;
+    margin-left: 12px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    color: #8a90b4;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+
+  .ctrl-side:hover {
+    background: #2b2e4a;
+    color: #e4e6f5;
+  }
+
+  .ctrl-side[aria-pressed="true"] {
+    color: #e4e6f5;
   }
 
   .ctrl {

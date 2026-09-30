@@ -17,6 +17,9 @@
   });
   onDestroy(() => store.destroy());
 
+  // An expanded call takes the whole window on a larger screen; a phone already shows it alone.
+  const callFills = $derived(store.callExpanded && !mobile.narrow && store.mainView === "call" && !!store.room);
+
   const SPLASH_MIN_MS = 1000;
 
   // The splash lives in app.html so it paints before JS; hide it once there's something to show.
@@ -55,7 +58,7 @@
     ontouchcancel={dragEnd}
   >
     <!-- Just the server list and sidebar side by side on a larger screen. -->
-    <div class="nav-pane" inert={mobile.narrow && mobile.pane === "main" && mobile.drag === null}>
+    <div class="nav-pane" class:hidden={callFills} inert={mobile.narrow && mobile.pane === "main" && mobile.drag === null}>
       <ServerRail />
       <Sidebar />
     </div>
@@ -83,6 +86,7 @@
   }
 
   .nav-pane { display: contents; }
+  .nav-pane.hidden { display: none; }
 
   /* Phones: the channel list stays put underneath; the chat or call slides over it. */
   @media (max-width: 768px) {

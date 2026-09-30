@@ -207,6 +207,8 @@ class GumcordStore {
   // Everyone with the app open, sorted by name; pushed by the server.
   online:            User[]               = $state.raw([]);
   showMembers                             = $state(localStorage.getItem(MEMBERS_KEY) !== "0");
+  // The call filling the window, without the server list, channels, header or member list. Just for this call.
+  callExpanded                            = $state(false);
   devices:           DevicePrefs          = $state(loadDevicePrefs());
   keybinds:          KeybindPrefs         = $state(loadKeybinds());
   // While the settings dialog records a new key, shortcuts are off.
@@ -1112,6 +1114,7 @@ class GumcordStore {
     this.#wantMuted        = false;
     this.userMenu          = null;
     this.mainView          = "chat";
+    this.callExpanded      = false;
     this.room              = null;
     this.voiceChannel      = null;
     this.voiceMuted        = false;

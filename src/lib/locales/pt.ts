@@ -98,6 +98,8 @@ export const pt: Record<string, string> = {
   "Watch Stream": "Assistir transmissão",
   "Stream muted for you": "Transmissão silenciada para você",
   "Turn on camera": "Ligar câmera",
+  "Hide sidebars": "Ocultar barras laterais",
+  "Show sidebars": "Mostrar barras laterais",
   "Camera is coming soon": "Câmera em breve",
 
   // ── Sidebar and servers ──
