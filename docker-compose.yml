@@ -18,6 +18,7 @@ services:
     image: livekit/livekit-server:v1.13.7
     command: --config /etc/livekit.yaml
     restart: unless-stopped
+    user: "1000:1000"
     # Host networking, as LiveKit recommends: media ports 7881/tcp and 7882/udp without Docker's NAT in the way.
     network_mode: host
     volumes:
