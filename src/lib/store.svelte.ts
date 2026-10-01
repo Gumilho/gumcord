@@ -3,6 +3,7 @@ import {
   type Participant, type RemoteParticipant, type RemoteTrackPublication,
 } from "livekit-client";
 import { audioContext, audioRunning, resumeAudio, setOutputDevice } from "./audio.ts";
+import { canSuppressNoise, NoiseFilter } from "./noise.ts";
 import { SpeakingDetector } from "./speaking.ts";
 import { playClip, playSound, preloadSounds } from "./sounds.ts";
 import { serverMessage, t } from "./i18n.svelte.ts";
@@ -89,6 +90,24 @@ function loadSoundboardVolume() {
 const DEVICES_KEY = "gc_devices";
 export type AudioDeviceKind = "audioinput" | "audiooutput";
 type DevicePrefs = Partial<Record<AudioDeviceKind, string>>;
+
+// How much background noise is taken out of your microphone, remembered per device. "standard" is
+// the browser's own suppression, "strong" adds RNNoise on top (see noise.ts), "off" sends it as is.
+const NOISE_KEY = "gc_noise_suppression";
+export type NoiseSuppression = "strong" | "standard" | "off";
+
+function loadNoiseSuppression(): NoiseSuppression {
+  const saved = localStorage.getItem(NOISE_KEY);
+  return saved === "standard" || saved === "off" ? saved : "strong";
+}
+
+// How hard strong suppression works, from 0 to 1.
+const NOISE_STRENGTH_KEY = "gc_noise_strength";
+
+function loadNoiseStrength() {
+  const v = Number(localStorage.getItem(NOISE_STRENGTH_KEY) ?? "1");
+  return Number.isFinite(v) ? Math.min(Math.max(v, 0), 1) : 1;
+}
 
 const WS_RECONNECT_BASE = 1_000;  // ms
 const WS_RECONNECT_MAX  = 30_000; // ms
@@ -213,6 +232,8 @@ class GumcordStore {
   // The call filling the window, without the server list, channels, header or member list. Just for this call.
   callExpanded                            = $state(false);
   devices:           DevicePrefs          = $state(loadDevicePrefs());
+  noiseSuppression:  NoiseSuppression     = $state(loadNoiseSuppression());
+  noiseStrength                           = $state(loadNoiseStrength());
   keybinds:          KeybindPrefs         = $state(loadKeybinds());
   // While the settings dialog records a new key, shortcuts are off.
   recordingKeybind                        = $state(false);
@@ -253,6 +274,10 @@ class GumcordStore {
   #justLeft: { channelId: number; until: number } | null = null;
   // Joining voice waits for this, so nobody is heard at the default volume before their setting loads.
   #userAudioLoaded: Promise<void> = Promise.resolve();
+  // Noise filter changes run one at a time, each against the latest setting.
+  #noiseFilterSync: Promise<void> = Promise.resolve();
+  // One listener however often it's added: the audio starting (or stopping) puts the filter on (or off).
+  #onAudioState = () => void this.#syncNoiseFilter();
   #fetchAbort:   AbortController | null        = null;
 
   // Labels shared by the sidebar and call-view controls.
@@ -817,7 +842,78 @@ class GumcordStore {
     localStorage.setItem(DEVICES_KEY, JSON.stringify(this.devices));
     if (kind === "audiooutput") await setOutputDevice(deviceId);
     else await this.room?.switchActiveDevice(kind, deviceId).catch((err) => console.warn("Couldn't switch microphone:", err));
+    this.#micReplaced();
+  }
+
+  // Takes effect at once, in a call too.
+  async setNoiseSuppression(level: NoiseSuppression) {
+    const browserChanged = (level === "off") !== (this.noiseSuppression === "off");
+    this.noiseSuppression = level;
+    localStorage.setItem(NOISE_KEY, level);
+    const track = this.#micTrack();
+    if (browserChanged && track && this.room) {
+      // The browser's own suppression is set when the microphone opens, so reopen it.
+      const capture = Object.assign(this.room.options.audioCaptureDefaults!, this.#browserSuppression());
+      await track.restartTrack({ ...capture }).catch((err) => console.warn("Couldn't reopen microphone:", err));
+      this.#micReplaced();
+    }
+    await this.#syncNoiseFilter();
+  }
+
+  // Sliders fire continuously: applied as it moves, in a call too.
+  setNoiseStrength(strength: number) {
+    this.noiseStrength = strength;
+    localStorage.setItem(NOISE_STRENGTH_KEY, String(strength));
+    const filter = this.#micTrack()?.getProcessor();
+    if (filter instanceof NoiseFilter) filter.setStrength(strength);
+  }
+
+  #browserSuppression() {
+    const on = this.noiseSuppression !== "off";
+    return { noiseSuppression: on, voiceIsolation: on };
+  }
+
+  // Strong suppression filters the microphone once audio may play: before the first click or key
+  // press (an automatic rejoin after a refresh) the filter's audio couldn't start, and would send
+  // silence. #onAudioState runs this again once it can.
+  #syncNoiseFilter() {
+    this.#noiseFilterSync = this.#noiseFilterSync
+      .then(() => this.#updateNoiseFilter())
+      // The call keeps the unfiltered microphone.
+      .catch((err) => console.warn("Couldn't change the noise filter:", err));
+    return this.#noiseFilterSync;
+  }
+
+  async #updateNoiseFilter() {
+    const track = this.#micTrack();
+    if (!track) return;
+    const want = this.noiseSuppression === "strong" && canSuppressNoise && audioRunning();
+    if (want === (track.getProcessor() instanceof NoiseFilter)) return;
+    try {
+      if (want) await track.setProcessor(new NoiseFilter(this.noiseStrength));
+      else await track.stopProcessor();
+    } finally {
+      this.#micReplaced();
+    }
+  }
+
+  #micTrack() {
+    return this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.audioTrack;
+  }
+
+  // The microphone itself: under the noise filter, LiveKit's mediaStreamTrack is the filtered copy.
+  #micInput() {
+    const track = this.#micTrack();
+    const filter = track?.getProcessor();
+    return filter instanceof NoiseFilter ? filter.input : track?.mediaStreamTrack;
+  }
+
+  // The microphone's track changed (another device, the noise filter going on or off): push-to-talk
+  // and your speaking ring follow the track the call is sent.
+  #micReplaced() {
     this.#applyPushToTalk(); // a new mic track starts enabled
+    const track = this.#micTrack();
+    if (track && this.room) this.#speakingDetector.watch(this.room.localParticipant.identity, track.mediaStreamTrack);
   }
 
   setKeybinds(prefs: KeybindPrefs) {
@@ -841,9 +937,10 @@ class GumcordStore {
     }
   }
 
+  // Silencing the microphone itself also silences the noise filter's output.
   #applyPushToTalk() {
-    const track = this.room?.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-    if (track) track.mediaStreamTrack.enabled = !this.keybinds.pushToTalk || this.#pttHeld;
+    const input = this.#micInput();
+    if (input) input.enabled = !this.keybinds.pushToTalk || this.#pttHeld;
   }
 
   toggleMembers() {
@@ -930,10 +1027,11 @@ class GumcordStore {
       // Only pull the video resolution each tile actually displays, and stop sending unwatched layers.
       adaptiveStream: true,
       dynacast: true,
-      audioCaptureDefaults: { deviceId: this.devices.audioinput },
+      audioCaptureDefaults: { deviceId: this.devices.audioinput, ...this.#browserSuppression() },
       // Plays everyone through gain nodes on the shared context: per-person volume can go past 100%.
       webAudioMix: { audioContext: audioContext() },
     });
+    audioContext().addEventListener("statechange", this.#onAudioState);
 
     // Discord has separate join/leave sounds for other people; connect/disconnect stand in for them.
     r.on(RoomEvent.ParticipantConnected, (participant) => {
@@ -983,10 +1081,10 @@ class GumcordStore {
       this.#updateParticipants(r);
     });
 
-    r.on(RoomEvent.LocalTrackPublished, (pub, participant) => {
-      if (pub.source === Track.Source.Microphone) this.#applyPushToTalk();
-      if (pub.source === Track.Source.Microphone && pub.track) {
-        this.#speakingDetector.watch(participant.identity, pub.track.mediaStreamTrack);
+    r.on(RoomEvent.LocalTrackPublished, (pub) => {
+      if (pub.source === Track.Source.Microphone) {
+        this.#micReplaced();
+        void this.#syncNoiseFilter();
       }
       this.#updateParticipants(r);
     });

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { isDesktop, store, type AudioDeviceKind, type KeybindAction } from "$lib/store.svelte.ts";
+  import { isDesktop, store, type AudioDeviceKind, type KeybindAction, type NoiseSuppression } from "$lib/store.svelte.ts";
   import { keybindFromEvent, keybindLabel, systemWide } from "$lib/shortcuts.svelte.ts";
   import { i18n, LANGUAGES, setLang, t, type Lang } from "$lib/i18n.svelte.ts";
   import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
   import { canPickOutput } from "$lib/audio.ts";
+  import { canSuppressNoise } from "$lib/noise.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
 
@@ -112,6 +113,15 @@
     const saved = store.devices[kind];
     return saved && options(kind).some((o) => o.id === saved) ? saved : "default";
   }
+
+  const NOISE_LEVELS: { id: NoiseSuppression; label: string; hint: string }[] = [
+    { id: "strong", label: "Strong", hint: "Also takes out keyboards, clicks and voices in the background, adapting as the noise around you changes." },
+    { id: "standard", label: "Standard", hint: "Takes out steady noise, like fans and hum." },
+    { id: "off", label: "Off", hint: "Sends your microphone as it is, for music or a studio mic." },
+  ];
+  // Strong needs audio worklets; without them it falls back to standard, so that's what shows.
+  const noiseLevels = NOISE_LEVELS.filter((l) => l.id !== "strong" || canSuppressNoise);
+  const noiseLevel = $derived(noiseLevels.find((l) => l.id === store.noiseSuppression) ?? NOISE_LEVELS[1]);
 </script>
 
 <svelte:window onkeydowncapture={onRecordKey} onpaste={(e) => usePhoto(pastedFile(e, isImage))} />
@@ -191,6 +201,32 @@
         {/each}
       </select>
     </label>
+
+    <label class="field">
+      <span>{t("Noise suppression")}</span>
+      <select value={noiseLevel.id} onchange={(e) => store.setNoiseSuppression(e.currentTarget.value as NoiseSuppression)}>
+        {#each noiseLevels as l (l.id)}
+          <option value={l.id}>{t(l.label)}</option>
+        {/each}
+      </select>
+    </label>
+    <p class="hint">{t(noiseLevel.hint)}</p>
+
+    {#if noiseLevel.id === "strong"}
+      {@const percent = Math.round(store.noiseStrength * 100)}
+      <label class="strength">
+        <span>{t("Strength")}</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          value={percent}
+          oninput={(e) => store.setNoiseStrength(Number(e.currentTarget.value) / 100)}
+        />
+        <span class="pct">{percent}%</span>
+      </label>
+      <p class="hint">{t("Turn it down if your voice comes through choppy or robotic.")}</p>
+    {/if}
 
     {#if canPickOutput}
       <label class="field">
@@ -319,7 +355,29 @@
 
   .row .field { flex: 1; }
 
-  input:not([type="file"]) {
+  .strength {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #8a90b4;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .strength input {
+    flex: 1;
+    accent-color: #5b40c2;
+  }
+
+  .pct {
+    width: 38px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  input:not([type="file"], [type="range"]) {
     min-width: 0;
     padding: 9px 12px;
     border: 1px solid #33365a;

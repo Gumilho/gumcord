@@ -255,6 +255,16 @@ export const pt: Record<string, string> = {
   "System default": "Padrão do sistema",
   "Microphone {n}": "Microfone {n}",
   "Speakers {n}": "Alto-falantes {n}",
+  "Noise suppression": "Supressão de ruído",
+  "Strong": "Forte",
+  "Standard": "Padrão",
+  "Off": "Desligada",
+  "Also takes out keyboards, clicks and voices in the background, adapting as the noise around you changes.":
+    "Também tira teclados, cliques e vozes ao fundo, se adaptando conforme o ruído ao seu redor muda.",
+  "Strength": "Intensidade",
+  "Turn it down if your voice comes through choppy or robotic.": "Diminua se sua voz chegar picotada ou robótica.",
+  "Takes out steady noise, like fans and hum.": "Tira ruídos constantes, como ventiladores e zumbidos.",
+  "Sends your microphone as it is, for music or a studio mic.": "Envia o microfone como ele é, para música ou um microfone de estúdio.",
   "This browser always plays through the system's default speakers.": "Este navegador sempre toca pelos alto-falantes padrão do sistema.",
   "Your devices' names show up once Gumcord may use the microphone.": "Os nomes dos dispositivos aparecem quando o Gumcord puder usar o microfone.",
 };
