@@ -242,7 +242,7 @@ export const pt: Record<string, string> = {
     "Escolha abaixo uma tecla para falar: até lá seu microfone fica mudo.",
   "Toggle mute": "Silenciar microfone",
   "Toggle deafen": "Desativar áudio",
-  "Press a key…": "Pressione uma tecla…",
+  "Press a key or mouse button…": "Pressione uma tecla ou botão do mouse…",
   "Not set": "Nenhuma",
   "These also work while another app is in front. The app takes over the key everywhere, so for push-to-talk pick one you don't type with (like F13 or a Ctrl combination).":
     "Também funcionam com outro app em primeiro plano. O app toma a tecla em todo lugar, então para falar escolha uma que você não usa para digitar (como F13 ou uma combinação com Ctrl).",

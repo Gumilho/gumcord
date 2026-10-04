@@ -58,12 +58,13 @@
     store.recordingKeybind = false;
   }
 
-  // Captures the next key for the row being changed; Escape cancels.
-  function onRecordKey(e: KeyboardEvent) {
+  // Captures the next key or mouse button for the row being changed; Escape cancels.
+  function onRecordKey(e: KeyboardEvent | MouseEvent) {
     if (!recording) return;
+    if (e instanceof MouseEvent && keybindFromEvent(e) === null) return; // left/right clicks still work the UI
     e.preventDefault();
     e.stopPropagation();
-    if (e.key === "Escape") return stopRecording();
+    if (e instanceof KeyboardEvent && e.key === "Escape") return stopRecording();
     const bind = keybindFromEvent(e);
     if (!bind) return; // a lone modifier: wait for the key
     setBind(recording, bind);
@@ -124,7 +125,7 @@
   const noiseLevel = $derived(noiseLevels.find((l) => l.id === store.noiseSuppression) ?? NOISE_LEVELS[1]);
 </script>
 
-<svelte:window onkeydowncapture={onRecordKey} onpaste={(e) => usePhoto(pastedFile(e, isImage))} />
+<svelte:window onkeydowncapture={onRecordKey} onmousedowncapture={onRecordKey} onpaste={(e) => usePhoto(pastedFile(e, isImage))} />
 
 <Modal title={t("User settings")} onclose={() => (recording ? stopRecording() : onclose())}>
   <section>
@@ -175,7 +176,7 @@
         <li>
           <span class="bind-name">{t(row.label)}</span>
           <kbd class:recording={recording === row.action}>
-            {recording === row.action ? t("Press a key…") : bind ? keybindLabel(bind) : t("Not set")}
+            {recording === row.action ? t("Press a key or mouse button…") : bind ? keybindLabel(bind) : t("Not set")}
           </kbd>
           <button class="link" type="button" onclick={() => startRecording(row.action)}>{t("Change")}</button>
           {#if bind}<button class="link" type="button" onclick={() => setBind(row.action, null)}>{t("Clear")}</button>{/if}
