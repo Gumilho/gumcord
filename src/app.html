@@ -5,6 +5,13 @@
     <link rel="icon" href="%sveltekit.assets%/icon.svg" type="image/svg+xml" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" type="image/png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Installable on phones (Add to Home Screen): opens fullscreen, without browser bars. -->
+    <link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="%sveltekit.assets%/apple-touch-icon.png" />
+    <meta name="theme-color" content="#1a1b2e" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Gumcord" />
     <!-- Nothing the app loads or links to learns it came from here. X's video server also refuses
          requests from other sites' pages. (YouTube's frame asks for our origin itself.) -->
     <meta name="referrer" content="no-referrer" />

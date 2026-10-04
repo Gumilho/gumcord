@@ -392,6 +392,9 @@ func serveApp(dir string) http.Handler {
 		} else {
 			w.Header().Set("Cache-Control", "no-cache") // index.html must pick up new builds
 		}
+		if strings.HasSuffix(file, ".webmanifest") {
+			w.Header().Set("Content-Type", "application/manifest+json") // not in Go's built-in table
+		}
 		http.ServeFile(w, r, file)
 	})
 }

@@ -39,9 +39,16 @@ let touch: {
   prev: { x: number; t: number };
 } | null = null;
 
+// Where the finger left a drag whose end never arrived: settle on the nearer side.
+function settle() {
+  if (mobile.drag !== null) mobile.pane = mobile.drag > innerWidth / 2 ? "nav" : "main";
+  mobile.drag = null;
+}
+
 // canOpen: whether there's a chat or call to slide back in from the channel list.
 export function dragStart(e: TouchEvent, canOpen: boolean) {
   touch = null;
+  settle(); // never leave the panel stuck halfway
   if (!mobile.narrow || e.touches.length !== 1) return;
   // Fields keep their own sideways gestures (moving the caret), and the call's strip scrolls sideways.
   if ((e.target as Element).closest("input, textarea, select, .strip")) return;
@@ -50,9 +57,23 @@ export function dragStart(e: TouchEvent, canOpen: boolean) {
   const width = innerWidth;
   const now = { x, t: e.timeStamp };
   touch = { x, y, base: mobile.pane === "nav" ? width : 0, width, axis: null, last: now, prev: now };
+
+  // A touch's events always go to the element it began on. If that element is replaced mid-drag
+  // (switching servers swaps the channel list), they stop bubbling to the page, so listen on the
+  // element itself and the drag still finishes.
+  const target = e.target as HTMLElement;
+  const finish = (ev: TouchEvent) => {
+    target.removeEventListener("touchmove", dragMove);
+    target.removeEventListener("touchend", finish);
+    target.removeEventListener("touchcancel", finish);
+    dragEnd(ev);
+  };
+  target.addEventListener("touchmove", dragMove, { passive: true });
+  target.addEventListener("touchend", finish);
+  target.addEventListener("touchcancel", finish);
 }
 
-export function dragMove(e: TouchEvent) {
+function dragMove(e: TouchEvent) {
   if (!touch) return;
   const { clientX: x, clientY: y } = e.touches[0];
   const dx = x - touch.x;
@@ -68,7 +89,7 @@ export function dragMove(e: TouchEvent) {
 
 // Settles on a side: the way it was flicked, or else the nearer one. The panel animates from
 // where the finger left it.
-export function dragEnd(e: TouchEvent) {
+function dragEnd(e: TouchEvent) {
   const t = touch;
   touch = null;
   if (!t || t.axis !== "x" || mobile.drag === null) return;

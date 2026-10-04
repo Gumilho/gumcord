@@ -9,7 +9,7 @@
   import ServerRail from '$lib/components/ServerRail.svelte';
   import { installShortcuts } from '$lib/shortcuts.svelte.ts';
   import { t } from '$lib/i18n.svelte.ts';
-  import { dragEnd, dragMove, dragStart, mobile } from '$lib/mobile.svelte.ts';
+  import { dragStart, mobile } from '$lib/mobile.svelte.ts';
 
   onMount(() => {
     void store.boot();
@@ -53,9 +53,6 @@
     class:show-nav={mobile.pane === "nav"}
     class:dragging={mobile.drag !== null}
     ontouchstart={(e) => dragStart(e, !!(store.activeChannel || store.room))}
-    ontouchmove={dragMove}
-    ontouchend={dragEnd}
-    ontouchcancel={dragEnd}
   >
     <!-- Just the server list and sidebar side by side on a larger screen. -->
     <div class="nav-pane" class:hidden={callFills} inert={mobile.narrow && mobile.pane === "main" && mobile.drag === null}>
@@ -83,6 +80,10 @@
     height: 100dvh; /* phones: the visible height, without the browser's toolbars */
     display: flex;
     overflow: hidden;
+    /* Not scrollable even by script: on a phone the chat waits off to the side while the channel
+       list shows, and scrollIntoView (the chat jumping to its newest message after a server
+       switch) would otherwise scroll this box over to it, leaving the panes out of step. */
+    overflow: clip;
   }
 
   .nav-pane { display: contents; }

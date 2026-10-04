@@ -9,6 +9,7 @@
   import MessageContent from "$lib/components/MessageContent.svelte";
   import EmotePicker from "$lib/components/EmotePicker.svelte";
   import BackButton from "$lib/components/BackButton.svelte";
+  import UserAvatar from "$lib/components/UserAvatar.svelte";
   import { chosenFile, pastedFile } from "$lib/files.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
@@ -19,6 +20,10 @@
   let fileInput: HTMLInputElement | null = $state(null);
   let textarea: HTMLTextAreaElement | null = $state(null);
   let viewing: string | null = $state(null);
+
+  // Authors' pictures, from the server's members (messages carry only the author's id). Someone
+  // who has left the server shows their initial.
+  const avatars = $derived(new Map(store.members.map((m) => [m.id, m.avatar?.startsWith("/files/") ? m.avatar : ""])));
 
   // A muted channel's new messages make no sound.
   const channelMuted = $derived(!!store.activeChannel && store.mutedChannels.has(store.activeChannel.id));
@@ -247,6 +252,9 @@
                 </button>
               </div>
             {/if}
+            <div class="msg-avatar" aria-hidden="true">
+              <UserAvatar name={msg.author} src={avatars.get(msg.author_id) ?? ""} />
+            </div>
             <div class="msg-meta">
               <span class="msg-author">{msg.author}</span>
               <span class="msg-time">{formatTime(msg.created_at)}</span>
@@ -486,8 +494,25 @@
     flex-direction: column;
     gap: 2px;
     margin: 0 -8px;
-    padding: 2px 8px;
+    padding: 2px 8px 2px 52px; /* room for the picture */
     border-radius: 6px;
+  }
+
+  .msg-avatar {
+    position: absolute;
+    top: 4px;
+    left: 8px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #5b40c2;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    user-select: none;
   }
 
   .message:hover, .message.editing, .message.deleting { background: #1f2136; }
