@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import { hue, initials } from "$lib/avatar.ts";
@@ -23,31 +25,31 @@
     e.preventDefault();
     if (!name.trim() || busy) return;
     busy = true;
-    error = await store.createServer(name.trim());
+    error = await servers.create(name.trim());
     busy = false;
     if (!error) creating = false;
   }
 </script>
 
 <nav class="rail" aria-label={t("Servers")}>
-  {#each store.servers as s (s.id)}
-    {@const active = store.activeServer?.id === s.id}
+  {#each servers.list as s (s.id)}
+    {@const active = servers.active?.id === s.id}
     <button
       class="server"
       class:active
-      class:in-voice={store.voiceChannel?.server_id === s.id}
+      class:in-voice={voice.channel?.server_id === s.id}
       style="--hue: {hue(s.name)}"
       aria-label={s.name}
       aria-current={active ? "page" : undefined}
       use:tooltip={s.name}
-      onclick={() => store.selectServer(s)}
+      onclick={() => servers.select(s)}
     >
       <UserAvatar name={s.name} src={s.icon} letters={initials(s.name)} />
     </button>
   {/each}
 
-  {#if store.me?.admin}
-    {#if store.servers.length > 0}<div class="divider" aria-hidden="true"></div>{/if}
+  {#if session.me?.admin}
+    {#if servers.list.length > 0}<div class="divider" aria-hidden="true"></div>{/if}
     <button class="server add" aria-label={t("Create a server")} use:tooltip={t("Create a server")} onclick={openCreate}>
       <Icon name="plus" />
     </button>
@@ -164,7 +166,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -188,7 +190,7 @@
 
   .hint {
     margin: 0;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 13px;
   }
 

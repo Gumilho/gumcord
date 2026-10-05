@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onlyEmotes, parseMessage, previewLinks } from "$lib/richtext.ts";
   import { getEmbed } from "$lib/embeds.ts";
-  import { store } from "$lib/store.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
   // A message's text with its links clickable and emotes shown, and link previews underneath.
@@ -12,7 +12,7 @@
     onview: (src: string) => void; // open a picture in the viewer
   } = $props();
 
-  const pieces = $derived(parseMessage(content, store.emoteMap));
+  const pieces = $derived(parseMessage(content, servers.emoteMap));
   const previews = $derived(previewLinks(pieces));
   // Players only load once pressed: nothing reaches the video's site before that.
   let playing = $state(new Set<string>());
@@ -76,7 +76,7 @@
   }
 
   .edited {
-    color: #5c6283;
+    color: #9095b1;
     font-size: 11px;
   }
 
@@ -124,7 +124,7 @@
   }
 
   .embed-site {
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 11px;
   }
 

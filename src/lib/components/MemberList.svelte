@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { chat } from "$lib/chat.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
@@ -7,21 +10,21 @@
 
   // The open server's members who are online right now.
   const online = $derived.by(() => {
-    const members = new Set(store.members.map((m) => m.id));
-    return store.online.filter((u) => members.has(u.id));
+    const members = new Set(servers.members.map((m) => m.id));
+    return servers.online.filter((u) => members.has(u.id));
   });
 
   // Which voice channel each online user is in, by identity (user ID).
   const voiceChannelOf = $derived.by(() => {
-    const names = new Map(store.channels.map((c) => [c.id, c.name]));
+    const names = new Map(chat.channels.map((c) => [c.id, c.name]));
     const where = new Map<string, string>();
-    for (const [id, members] of store.voiceRooms) {
+    for (const [id, members] of voice.rooms) {
       for (const m of members) where.set(m.identity, names.get(id) ?? "voice");
     }
     // Your own call is known right away; the server's list lags your joins and leaves.
-    if (store.me) {
-      const me = String(store.me.id);
-      if (store.voiceChannel) where.set(me, store.voiceChannel.name);
+    if (session.me) {
+      const me = String(session.me.id);
+      if (voice.channel) where.set(me, voice.channel.name);
       else where.delete(me);
     }
     return where;
@@ -62,7 +65,7 @@
   .heading {
     margin: 0;
     padding: 16px 8px 6px;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;

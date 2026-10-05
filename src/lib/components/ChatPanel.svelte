@@ -1,6 +1,10 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { store, type Emote, type Message } from "$lib/store.svelte.ts";
+  import { chat } from "$lib/chat.svelte.ts";
+  import { prefs } from "$lib/prefs.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import type { Emote, Message } from "$lib/types.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
   import MemberList from "$lib/components/MemberList.svelte";
@@ -23,14 +27,14 @@
 
   // Authors' pictures, from the server's members (messages carry only the author's id). Someone
   // who has left the server shows their initial.
-  const avatars = $derived(new Map(store.members.map((m) => [m.id, m.avatar?.startsWith("/files/") ? m.avatar : ""])));
+  const avatars = $derived(new Map(servers.members.map((m) => [m.id, m.avatar?.startsWith("/files/") ? m.avatar : ""])));
 
   // A muted channel's new messages make no sound.
-  const channelMuted = $derived(!!store.activeChannel && store.mutedChannels.has(store.activeChannel.id));
+  const channelMuted = $derived(!!chat.activeChannel && chat.mutedChannels.has(chat.activeChannel.id));
 
   // Grow the textarea with its content (also shrinks back after send clears the draft).
   $effect(() => {
-    store.draft;
+    chat.draft;
     if (!textarea) return;
     textarea.style.height = "auto";
     textarea.style.height = `${textarea.scrollHeight}px`;
@@ -42,11 +46,11 @@
   let highlighted = $state(0);
   let dismissed = $state(""); // the search closed with Escape
 
-  const emoteSearch = $derived(/(?:^|\s):([A-Za-z0-9_]{2,32})$/.exec(store.draft.slice(0, caret))?.[1] ?? "");
+  const emoteSearch = $derived(/(?:^|\s):([A-Za-z0-9_]{2,32})$/.exec(chat.draft.slice(0, caret))?.[1] ?? "");
   const suggestions = $derived.by(() => {
     const q = emoteSearch.toLowerCase();
     if (!q || emoteSearch === dismissed) return [];
-    const matches = store.emotes.filter((e) => e.name.toLowerCase().includes(q));
+    const matches = servers.emotes.filter((e) => e.name.toLowerCase().includes(q));
     const starts = (e: Emote) => (e.name.toLowerCase().startsWith(q) ? 0 : 1);
     return matches.sort((a, b) => starts(a) - starts(b)).slice(0, 8);
   });
@@ -59,9 +63,9 @@
   async function insertEmote(emote: Emote, replace = 0) {
     const el = textarea;
     if (!el) return;
-    const before = store.draft.slice(0, el.selectionStart - replace);
+    const before = chat.draft.slice(0, el.selectionStart - replace);
     const text = `${before && !/\s$/.test(before) ? " " : ""}:${emote.name}: `;
-    store.draft = before + text + store.draft.slice(el.selectionEnd);
+    chat.draft = before + text + chat.draft.slice(el.selectionEnd);
     const at = before.length + text.length;
     await tick();
     el.focus();
@@ -93,8 +97,8 @@
   function onInputKeydown(e: KeyboardEvent) {
     if (suggestions.length && !e.isComposing && onSuggestionKey(e)) return;
     // Up in an empty box edits your last message.
-    if (e.key === "ArrowUp" && !store.draft) {
-      const mine = store.messages.findLast((m) => store.canEdit(m));
+    if (e.key === "ArrowUp" && !chat.draft) {
+      const mine = chat.messages.findLast((m) => chat.canEdit(m));
       if (mine) {
         e.preventDefault();
         startEdit(mine);
@@ -103,12 +107,12 @@
     }
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      if (!store.uploading) store.sendMessage();
+      if (!chat.uploading) chat.sendMessage();
     }
   }
 
   function attach(file: File | null) {
-    if (file && !store.uploading) void store.uploadFile(file);
+    if (file && !chat.uploading) void chat.uploadFile(file);
   }
 
 
@@ -126,10 +130,21 @@
     if (atBottom) msgEnd?.scrollIntoView({ block: "end" });
   }
 
+  // Screen readers hear new messages, but not the history that fills in when a channel opens.
+  let announce = $state(false);
+  $effect(() => {
+    if (chat.loading) {
+      announce = false;
+      return;
+    }
+    const timer = setTimeout(() => (announce = true), 500);
+    return () => clearTimeout(timer);
+  });
+
   // Scroll to the bottom when a message arrives or another channel opens, not when one is edited or deleted.
   let lastMessageId: number | undefined;
   $effect(() => {
-    const last = store.messages.at(-1)?.id;
+    const last = chat.messages.at(-1)?.id;
     if (last === lastMessageId) return;
     lastMessageId = last;
     setTimeout(() => msgEnd?.scrollIntoView({ block: "end" }), 0);
@@ -162,7 +177,7 @@
       deletingId = msg.id;
       return;
     }
-    actionError = await store.editMessage(msg.id, content);
+    actionError = await chat.editMessage(msg.id, content);
     if (!actionError) stopEdit();
   }
 
@@ -185,7 +200,7 @@
   }
 
   async function deleteNow(msg: Message) {
-    actionError = await store.deleteMessage(msg.id);
+    actionError = await chat.deleteMessage(msg.id);
     if (!actionError) deletingId = null;
   }
 
@@ -217,17 +232,17 @@
   }
 </script>
 
-{#if store.activeChannel}
+{#if chat.activeChannel}
   <header class="main-header">
     <BackButton />
-    <span class="header-title"># {store.activeChannel.name}</span>
+    <h1 class="header-title"># {chat.activeChannel.name}</h1>
     <button
       class="mute-toggle"
       type="button"
       aria-label={t("Mute channel")}
       aria-pressed={channelMuted}
       use:tooltip={t(channelMuted ? "Unmute channel" : "Mute channel")}
-      onclick={() => store.activeChannel && store.toggleChannelMute(store.activeChannel.id)}
+      onclick={() => chat.activeChannel && chat.toggleMute(chat.activeChannel.id)}
     >
       <VoiceIcon kind="bell" slashed={channelMuted} />
     </button>
@@ -237,12 +252,13 @@
   <!-- The header spans the chat and the member list, like Discord. -->
   <div class="chat-body">
     <div class="chat-column">
-      <div class="messages" onscroll={onMessagesScroll}>
-        {#each store.messages as msg (msg.id)}
+      <!-- A log: new messages are read out as they arrive, but not a channel's whole history when it opens. -->
+      <div class="messages" role="log" aria-label={t("Messages")} aria-live={announce ? "polite" : "off"} onscroll={onMessagesScroll}>
+        {#each chat.messages as msg (msg.id)}
           <div class="message" class:editing={editingId === msg.id} class:deleting={deletingId === msg.id}>
-            {#if editingId !== msg.id && store.canDelete(msg)}
+            {#if editingId !== msg.id && chat.canDelete(msg)}
               <div class="msg-actions">
-                {#if store.canEdit(msg)}
+                {#if chat.canEdit(msg)}
                   <button type="button" aria-label={t("Edit message")} use:tooltip={t("Edit")} onclick={() => startEdit(msg)}>
                     <Icon name="edit" size={16} />
                   </button>
@@ -284,7 +300,7 @@
                 />
               </button>
             {:else if msg.attachment_url && msg.attachment_type === "sticker"}
-              {@const name = store.stickers.find((s) => s.url === msg.attachment_url)?.name ?? t("Sticker")}
+              {@const name = servers.stickers.find((s) => s.url === msg.attachment_url)?.name ?? t("Sticker")}
               <img class="msg-sticker" src={msg.attachment_url} alt={name} title={name} loading="lazy" onload={onImageLoad} />
             {:else if msg.attachment_url && msg.attachment_type === "video"}
               <!-- svelte-ignore a11y_media_has_caption -->
@@ -302,7 +318,7 @@
                 <button type="button" class="cancel-btn" onclick={() => (deletingId = null)}>{t("Cancel")}</button>
               </div>
             {/if}
-            {#if actionError && (editingId === msg.id || deletingId === msg.id)}<p class="action-error">{actionError}</p>{/if}
+            {#if actionError && (editingId === msg.id || deletingId === msg.id)}<p class="action-error" role="alert">{actionError}</p>{/if}
           </div>
         {/each}
         <div bind:this={msgEnd}></div>
@@ -310,33 +326,33 @@
 
       <div class="chat-form">
         <div class="text-area">
-          {#if store.uploading || store.pendingAttachment || store.uploadError}
+          {#if chat.uploading || chat.pendingAttachment || chat.uploadError}
             <div class="attachments">
-              {#if store.uploading}
-                <div class="upload-status">{t("Uploading…")}</div>
-              {:else if store.uploadError}
-                <div class="upload-status error">
-                  {store.uploadError}
-                  <button type="button" class="dismiss-btn" aria-label={t("Dismiss")} use:tooltip={t("Dismiss")} onclick={() => (store.uploadError = "")}>
+              {#if chat.uploading}
+                <div class="upload-status" role="status">{t("Uploading…")}</div>
+              {:else if chat.uploadError}
+                <div class="upload-status error" role="alert">
+                  {chat.uploadError}
+                  <button type="button" class="dismiss-btn" aria-label={t("Dismiss")} use:tooltip={t("Dismiss")} onclick={() => (chat.uploadError = "")}>
                     <Icon name="close" size={16} />
                   </button>
                 </div>
-              {:else if store.pendingAttachment}
+              {:else if chat.pendingAttachment}
                 <div class="tile">
                   <div class="tile-media">
-                    {#if store.pendingAttachment.type === "image"}
-                      <img src={store.pendingAttachment.url} alt={store.pendingAttachment.name} />
+                    {#if chat.pendingAttachment.type === "image"}
+                      <img src={chat.pendingAttachment.url} alt={chat.pendingAttachment.name} />
                     {:else}
                       <Icon name="file" size={48} />
                     {/if}
                   </div>
-                  <span class="tile-name">{store.pendingAttachment.name}</span>
+                  <span class="tile-name">{chat.pendingAttachment.name}</span>
                   <button
                     type="button"
                     class="tile-remove"
                     aria-label={t("Remove attachment")}
                     use:tooltip={t("Remove attachment")}
-                    onclick={() => (store.pendingAttachment = null)}
+                    onclick={() => (chat.pendingAttachment = null)}
                   >
                     <Icon name="trash" size={18} />
                   </button>
@@ -352,7 +368,7 @@
               type="button"
               aria-label={t("Upload a file")}
               use:tooltip={t("Upload a file")}
-              disabled={store.uploading}
+              disabled={chat.uploading}
               onclick={() => fileInput?.click()}
             >
               <Icon name="plus" />
@@ -361,9 +377,9 @@
               class="msg-input"
               rows="1"
               bind:this={textarea}
-              bind:value={store.draft}
-              placeholder={t("Message #{channel}", { channel: store.activeChannel.name })}
-              aria-label={t("Message #{channel}", { channel: store.activeChannel.name })}
+              bind:value={chat.draft}
+              placeholder={t("Message #{channel}", { channel: chat.activeChannel.name })}
+              aria-label={t("Message #{channel}", { channel: chat.activeChannel.name })}
               onkeydown={onInputKeydown}
               onpaste={(e) => attach(pastedFile(e))}
               oninput={() => { trackCaret(); highlighted = 0; }}
@@ -400,15 +416,15 @@
         {/if}
       </div>
     </div>
-    {#if store.showMembers}
+    {#if prefs.showMembers}
       <MemberList />
     {/if}
   </div>
 {:else}
   <header class="main-header empty"><BackButton /></header>
   <div class="empty-state">
-    {#if store.servers.length === 0}
-      {t(store.me?.admin
+    {#if servers.list.length === 0}
+      {t(session.me?.admin
         ? "No servers yet. Create one with the + on the left."
         : "You're not in any servers yet. Ask an admin to add you.")}
     {:else}
@@ -445,6 +461,8 @@
   }
 
   .header-title {
+    margin: 0;
+    font: inherit;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -459,7 +477,7 @@
     border: none;
     border-radius: 4px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
     transition: color 0.1s;
   }
@@ -540,7 +558,7 @@
     border: none;
     border-radius: 4px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
   }
 
@@ -564,7 +582,7 @@
 
   .edit-hint {
     margin: 2px 0 0;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 12px;
   }
 
@@ -616,12 +634,12 @@
   .msg-author {
     font-weight: 600;
     font-size: 13.5px;
-    color: #9d82e0;
+    color: #a187e1;
   }
 
   .msg-time {
     font-size: 11px;
-    color: #4a5168;
+    color: #8e96af;
   }
 
   /* ── Chat input (Discord layout) ── */
@@ -692,6 +710,7 @@
     position: sticky;
     top: 0;
     flex-shrink: 0;
+    min-width: 28px; /* a target big enough to hit */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -700,7 +719,7 @@
     padding: 0;
     border: none;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
     transition: color 0.1s;
   }
@@ -731,7 +750,7 @@
   }
 
   .msg-input::placeholder {
-    color: #5c6283;
+    color: #9095b1;
   }
 
   /* ── Attachment tiles (inside the input box) ── */
@@ -760,7 +779,7 @@
     height: 160px;
     border-radius: 3px;
     background: #16172a;
-    color: #6b7290;
+    color: #9095ac;
     overflow: hidden;
   }
 
@@ -818,7 +837,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 13px;
   }
 
@@ -932,7 +951,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #4a5168;
+    color: #8e96af;
     font-size: 15px;
   }
 </style>

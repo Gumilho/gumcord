@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { prefs } from "$lib/prefs.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import Icon from "$lib/components/Icon.svelte";
@@ -9,12 +9,12 @@
 
 <button
   class="toggle"
-  class:active={store.showMembers}
+  class:active={prefs.showMembers}
   type="button"
   aria-label={t("Member list")}
-  aria-pressed={store.showMembers}
-  use:tooltip={t(store.showMembers ? "Hide member list" : "Show member list")}
-  onclick={() => store.toggleMembers()}
+  aria-pressed={prefs.showMembers}
+  use:tooltip={t(prefs.showMembers ? "Hide member list" : "Show member list")}
+  onclick={() => prefs.toggleMembers()}
 >
   <Icon name="members" />
 </button>
@@ -27,7 +27,7 @@
     border: none;
     border-radius: 4px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
     transition: color 0.1s;
   }

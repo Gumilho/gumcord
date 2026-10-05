@@ -1,7 +1,16 @@
 <script lang="ts">
-  import { store, type Channel, type ChannelKind } from "$lib/store.svelte.ts";
+  import { app } from "$lib/app.svelte.ts";
+  import { chat } from "$lib/chat.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import { ui } from "$lib/ui.svelte.ts";
+  import { userAudio } from "$lib/userAudio.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
+  import { personButtonLabel, personStatus } from "$lib/voice-util.ts";
+  import type { Channel, ChannelKind } from "$lib/types.ts";
   import { ConnectionQuality } from "livekit-client";
   import { tooltip } from "$lib/tooltip.ts";
+  import { dialogFocus, menuKeys } from "$lib/focus.ts";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import VoiceIcon from "$lib/components/VoiceIcon.svelte";
@@ -27,13 +36,13 @@
   };
 
   const quality = $derived({
-    cls: store.voiceQuality === ConnectionQuality.Poor ? "poor" : store.voiceQuality === ConnectionQuality.Lost ? "lost" : "good",
-    label: QUALITY_LABEL[store.voiceQuality],
+    cls: voice.quality === ConnectionQuality.Poor ? "poor" : voice.quality === ConnectionQuality.Lost ? "lost" : "good",
+    label: QUALITY_LABEL[voice.quality],
   });
 
-  const textChannels = $derived(store.channels.filter((c) => c.kind === "text"));
-  const voiceChannels = $derived(store.channels.filter((c) => c.kind === "voice"));
-  const liveIds = $derived(new Set(store.streams.map((s) => s.identity)));
+  const textChannels = $derived(chat.channels.filter((c) => c.kind === "text"));
+  const voiceChannels = $derived(chat.channels.filter((c) => c.kind === "voice"));
+  const liveIds = $derived(new Set(voice.streams.map((s) => s.identity)));
 
   const WIDTH_KEY  = "gc_sidebar_width";
   const MIN_WIDTH  = 264;
@@ -111,7 +120,7 @@
 
   // Admins create channels; everyone else gets the browser's own menu.
   function onNavContext(e: MouseEvent) {
-    if (!store.me?.admin || !store.activeServer) return;
+    if (!session.me?.admin || !servers.active) return;
     openMenu(e, [
       { label: t('New Text Channel'), action: () => startCreate('text') },
       { label: t('New Voice Channel'), action: () => startCreate('voice') },
@@ -122,18 +131,18 @@
     e.stopPropagation();
     const items: MenuItem[] = [];
     if (ch.kind === 'text') {
-      const muted = store.mutedChannels.has(ch.id);
-      items.push({ label: t(muted ? 'Unmute Channel' : 'Mute Channel'), action: () => store.toggleChannelMute(ch.id) });
+      const muted = chat.mutedChannels.has(ch.id);
+      items.push({ label: t(muted ? 'Unmute Channel' : 'Mute Channel'), action: () => chat.toggleMute(ch.id) });
     }
     if (ch.kind === 'voice') {
-      items.push(...(store.voiceChannel?.id === ch.id
+      items.push(...(voice.channel?.id === ch.id
         ? [
-            { label: t('Open Call'), action: () => store.openVoiceChannel(ch) },
-            { label: t('Leave Channel'), action: () => store.leaveVoice(), danger: true },
+            { label: t('Open Call'), action: () => voice.open(ch) },
+            { label: t('Leave Channel'), action: () => voice.leave(), danger: true },
           ]
-        : [{ label: t(store.room ? 'Switch to Channel' : 'Join Channel'), action: () => store.openVoiceChannel(ch) }]));
+        : [{ label: t(voice.room ? 'Switch to Channel' : 'Join Channel'), action: () => voice.open(ch) }]));
     }
-    if (store.me?.admin) {
+    if (session.me?.admin) {
       items.push(
         { label: t('Edit Channel'), action: () => (editing = { channel: ch, deleting: false }) },
         { label: t('Delete Channel'), action: () => (editing = { channel: ch, deleting: true }), danger: true },
@@ -151,7 +160,7 @@
   async function confirmCreate() {
     const name = createName.trim();
     if (!name || !creating) return;
-    await store.createChannel(name, creating);
+    if (servers.active) await chat.createChannel(servers.active.id, name, creating);
     cancelCreate();
   }
 
@@ -167,7 +176,7 @@
 
 <!-- Admins: a gear on the channel row, shown on hover. -->
 {#snippet channelGear(ch: Channel)}
-  {#if store.me?.admin}
+  {#if session.me?.admin}
     <button class="channel-gear" aria-label={t("Edit channel {name}", { name: ch.name })} use:tooltip={t("Edit Channel")} onclick={() => (editing = { channel: ch, deleting: false })}>
       <Icon name="settings" size={16} />
     </button>
@@ -189,24 +198,25 @@
   </div>
 {/snippet}
 
-<aside class="sidebar" style="width: {width}px">
+<aside class="sidebar-pane" aria-label={t("Sidebar")}>
+<div class="sidebar" style="width: {width}px">
   <!-- Header -->
   <div class="sidebar-header">
-    <span class="sidebar-title">{store.activeServer?.name ?? "Gumcord"}</span>
+    <span class="sidebar-title">{servers.active?.name ?? "Gumcord"}</span>
     <div class="header-actions">
-      {#if store.me?.admin && store.activeServer}
+      {#if session.me?.admin && servers.active}
         <button class="icon-btn" aria-label={t("Server settings")} use:tooltip={t("Server settings")} onclick={() => (settingsOpen = true)}>
           <Icon name="settings" size={18} />
         </button>
       {/if}
-      <button class="icon-btn" aria-label={t("Log out")} use:tooltip={t("Log out")} onclick={() => store.logout()}>
+      <button class="icon-btn" aria-label={t("Log out")} use:tooltip={t("Log out")} onclick={() => app.logout()}>
         <Icon name="logout" size={18} />
       </button>
     </div>
   </div>
 
   <!-- Channels list -->
-  <nav class="channels" oncontextmenu={onNavContext}>
+  <nav class="channels" aria-label={t("Channels")} oncontextmenu={onNavContext}>
     <!-- Text section -->
     <div class="section-header">
       <span class="chevron"><Icon name="chevron" size={12} /></span>
@@ -217,14 +227,14 @@
       <div class="channel-item">
         <button
           class="channel-row"
-          class:active={store.mainView === "chat" && store.activeChannel?.id === ch.id}
-          class:muted={store.mutedChannels.has(ch.id)}
-          onclick={() => { void store.selectChannel(ch); showMain(); }}
+          class:active={ui.mainView === "chat" && chat.activeChannel?.id === ch.id}
+          class:muted={chat.mutedChannels.has(ch.id)}
+          onclick={() => { void chat.selectChannel(ch); showMain(); }}
           oncontextmenu={(e) => onChannelContext(e, ch)}
         >
           <span class="ch-icon"><Icon name="hash" size={18} /></span>
           <span class="ch-name">{ch.name}</span>
-          {#if store.mutedChannels.has(ch.id)}
+          {#if chat.mutedChannels.has(ch.id)}
             <span class="ch-muted" role="img" aria-label={t("Channel muted")}><VoiceIcon kind="bell" slashed size={16} /></span>
           {/if}
         </button>
@@ -246,9 +256,9 @@
       <div class="channel-item">
         <button
           class="channel-row voice-channel"
-          class:in-voice={store.voiceChannel?.id === ch.id}
-          class:active={store.mainView === "call" && store.voiceChannel?.id === ch.id}
-          onclick={() => { void store.openVoiceChannel(ch, mobile.narrow); showMain(); }}
+          class:in-voice={voice.channel?.id === ch.id}
+          class:active={ui.mainView === "call" && voice.channel?.id === ch.id}
+          onclick={() => { void voice.open(ch, mobile.narrow); showMain(); }}
           oncontextmenu={(e) => onChannelContext(e, ch)}
         >
           <span class="ch-icon"><Icon name="speaker" size={18} /></span>
@@ -259,48 +269,55 @@
 
       <!-- Participants -->
       <!-- Your own call uses live LiveKit state; other channels use what the server reports. -->
-      {@const inCall = store.voiceChannel?.id === ch.id}
-      {@const members = inCall ? store.voiceParticipants : (store.voiceRooms.get(ch.id) ?? [])}
+      {@const inCall = voice.channel?.id === ch.id}
+      {@const members = inCall ? voice.participants : (voice.rooms.get(ch.id) ?? [])}
       {#if members.length > 0}
         <ul class="participants">
           {#each members as p (p.identity)}
-            {@const speaking = inCall && store.speaking.has(p.identity)}
+            {@const speaking = inCall && voice.speaking.has(p.identity)}
             {@const live = inCall ? liveIds.has(p.identity) : "streaming" in p && p.streaming}
-            {@const mutedByMe = store.userAudioFor(p.identity).muted}
-            {@const clickable = !store.isMe(p.identity)}
-            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-            <li
-              class="participant"
-              class:speaking
-              class:clickable
-              role={clickable ? "button" : undefined}
-              tabindex={clickable ? 0 : undefined}
-              aria-label={clickable ? t("Voice settings for {name}", { name: p.name }) : undefined}
-              onclick={(e) => store.openUserMenu(e, p)}
-              oncontextmenu={(e) => store.openUserMenu(e, p)}
-              onkeydown={(e) => store.openUserMenu(e, p)}
-            >
-              <div class="participant-avatar" class:speaking>
-                <UserAvatar name={p.name} src={p.avatar} />
-              </div>
-              <span class="participant-name">{p.name}</span>
-              {#if live}
-                <span class="live-badge">{t("LIVE")}</span>
-              {/if}
-              {#if mutedByMe}
-                <span class="status-icon muted-by-me" role="img" aria-label={t("Muted for you")} use:tooltip={t("Muted for you")}>
-                  <VoiceIcon kind="mic" slashed size={16} />
-                </span>
-              {:else if p.muted}
-                <span class="status-icon" role="img" aria-label={t("Muted")} use:tooltip={t("Muted")}>
-                  <VoiceIcon kind="mic" slashed size={16} />
-                </span>
-              {/if}
-              {#if p.deafened}
-                <span class="status-icon" role="img" aria-label={t("Deafened")} use:tooltip={t("Deafened")}>
-                  <VoiceIcon kind="headphones" slashed size={16} />
-                </span>
+            {@const mutedByMe = userAudio.get(p.identity).muted}
+            {@const clickable = !session.isMe(p.identity)}
+            {@const status = personStatus(p, mutedByMe)}
+            <li class="participant" class:speaking>
+              {#snippet row()}
+                <div class="participant-avatar" class:speaking>
+                  <UserAvatar name={p.name} src={p.avatar} />
+                </div>
+                <span class="participant-name">{p.name}</span>
+                {#if live}
+                  <span class="live-badge">{t("LIVE")}</span>
+                {/if}
+                {#if mutedByMe}
+                  <span class="status-icon muted-by-me" role="img" aria-label={t("Muted for you")} use:tooltip={t("Muted for you")}>
+                    <VoiceIcon kind="mic" slashed size={16} />
+                  </span>
+                {:else if p.muted}
+                  <span class="status-icon" role="img" aria-label={t("Muted")} use:tooltip={t("Muted")}>
+                    <VoiceIcon kind="mic" slashed size={16} />
+                  </span>
+                {/if}
+                {#if p.deafened}
+                  <span class="status-icon" role="img" aria-label={t("Deafened")} use:tooltip={t("Deafened")}>
+                    <VoiceIcon kind="headphones" slashed size={16} />
+                  </span>
+                {/if}
+              {/snippet}
+              {#if clickable}
+                <!-- Opens their volume menu. Its name says who is muted or deafened: the icons beside it don't reach a screen reader. -->
+                <button
+                  class="participant-row"
+                  type="button"
+                  aria-label={personButtonLabel(p.name, status)}
+                  onclick={(e) => userAudio.openMenu(e, p)}
+                  oncontextmenu={(e) => userAudio.openMenu(e, p)}
+                >
+                  {@render row()}
+                </button>
+              {:else}
+                <div class="participant-row">
+                  {@render row()}
+                </div>
               {/if}
             </li>
           {/each}
@@ -314,7 +331,7 @@
   </nav>
 
   <!-- Voice connection panel -->
-  {#if store.room && store.voiceChannel}
+  {#if voice.room && voice.channel}
     <div class="voice-panel">
       <div class="voice-status q-{quality.cls}">
         <span class="ping" role="img" aria-label={t("Connection: {quality}", { quality: t(quality.label) })} use:tooltip={t("Connection: {quality}", { quality: t(quality.label) })}>
@@ -322,23 +339,23 @@
         </span>
         <div class="voice-text">
           <span class="voice-label">{t("Voice Connected")}</span>
-          {#if store.audioBlocked}
-            <button class="audio-blocked" onclick={() => store.enableAudio()}>{t("Click to enable audio")}</button>
+          {#if voice.audioBlocked}
+            <button class="audio-blocked" onclick={() => voice.enableAudio()}>{t("Click to enable audio")}</button>
           {:else}
             <!-- Names the server too: you may be looking at a different one. -->
-            <span class="voice-channel-name">{store.voiceChannel.name}{store.voiceServer ? ` / ${store.voiceServer.name}` : ""}</span>
+            <span class="voice-channel-name">{voice.channel.name}{voice.server ? ` / ${voice.server.name}` : ""}</span>
           {/if}
         </div>
       </div>
       <div class="voice-actions">
         <button
           class="icon-btn"
-          class:sharing={store.screenSharing}
-          aria-disabled={!store.canScreenShare}
-          aria-pressed={store.screenSharing}
-          aria-label={store.shareLabel}
-          use:tooltip={store.shareLabel}
-          onclick={() => store.toggleScreenShare()}
+          class:sharing={voice.screenSharing}
+          aria-disabled={!voice.canScreenShare}
+          aria-pressed={voice.screenSharing}
+          aria-label={voice.shareLabel}
+          use:tooltip={voice.shareLabel}
+          onclick={() => voice.toggleScreenShare()}
         >
           <Icon name="screenShare" />
         </button>
@@ -355,7 +372,7 @@
         {#if soundboardOpen && soundboardBtn}
           <Soundboard anchor={soundboardBtn} onclose={() => (soundboardOpen = false)} />
         {/if}
-        <button class="icon-btn disconnect" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
+        <button class="icon-btn disconnect" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => voice.leave()}>
           <Icon name="hangup" />
         </button>
       </div>
@@ -364,30 +381,30 @@
 
   <!-- Footer -->
   <div class="sidebar-footer">
-    <div class="avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
-    <span class="self-name">{store.me?.name}</span>
+    <div class="avatar"><UserAvatar name={session.me?.name ?? ""} src={session.me?.avatar} /></div>
+    <span class="self-name">{session.me?.name}</span>
 
-    {#if store.room}
+    {#if voice.room}
       <button
         class="icon-btn"
-        class:muted={store.voiceMuted}
-        aria-label={store.muteLabel}
-        aria-pressed={store.voiceMuted}
-        use:tooltip={store.muteLabel}
-        onclick={() => store.toggleMute()}
+        class:muted={voice.muted}
+        aria-label={voice.muteLabel}
+        aria-pressed={voice.muted}
+        use:tooltip={voice.muteLabel}
+        onclick={() => voice.toggleMute()}
       >
-        <VoiceIcon kind="mic" slashed={store.voiceMuted} />
+        <VoiceIcon kind="mic" slashed={voice.muted} />
       </button>
 
       <button
         class="icon-btn"
-        class:muted={store.voiceDeafened}
-        aria-label={store.deafenLabel}
-        aria-pressed={store.voiceDeafened}
-        use:tooltip={store.deafenLabel}
-        onclick={() => store.toggleDeafen()}
+        class:muted={voice.deafened}
+        aria-label={voice.deafenLabel}
+        aria-pressed={voice.deafened}
+        use:tooltip={voice.deafenLabel}
+        onclick={() => voice.toggleDeafen()}
       >
-        <VoiceIcon kind="headphones" slashed={store.voiceDeafened} />
+        <VoiceIcon kind="headphones" slashed={voice.deafened} />
       </button>
     {/if}
 
@@ -395,7 +412,7 @@
       <Icon name="settings" />
     </button>
   </div>
-</aside>
+</div>
 
 <!-- Zero-width flex item on the border line, so the grab area can straddle it (the sidebar clips overflow). -->
 <div class="resize-rail">
@@ -425,7 +442,7 @@
     onclick={closeMenu}
     oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
   ></div>
-  <div class="context-menu" style="left:{menu.x}px; top:{menu.y}px" role="menu">
+  <div class="context-menu" style="left:{menu.x}px; top:{menu.y}px" role="menu" aria-label={t("Channel menu")} use:dialogFocus={{ first: "[role=menuitem]" }} use:menuKeys>
     {#each menu.items as item}
       <button
         class="menu-item"
@@ -438,6 +455,7 @@
     {/each}
   </div>
 {/if}
+</aside>
 
 {#if userSettingsOpen}
   <UserSettings onclose={() => (userSettingsOpen = false)} />
@@ -447,11 +465,18 @@
   <ChannelSettings channel={editing.channel} deleting={editing.deleting} onclose={() => (editing = null)} />
 {/if}
 
-{#if settingsOpen && store.activeServer}
-  <ServerSettings server={store.activeServer} onclose={() => (settingsOpen = false)} />
+{#if settingsOpen && servers.active}
+  <ServerSettings server={servers.active} onclose={() => (settingsOpen = false)} />
 {/if}
 
 <style>
+  /* The landmark: the sidebar and the handle on its edge. */
+  .sidebar-pane {
+    display: flex;
+    flex-shrink: 0;
+    min-height: 0;
+  }
+
   .sidebar {
     position: relative;
     flex-shrink: 0;
@@ -465,6 +490,11 @@
   /* ── Resize handle ── */
   /* Phones: the sidebar is the whole navigation pane beside the server list. */
   @media (max-width: 768px) {
+    .sidebar-pane {
+      flex: 1;
+      min-width: 0;
+    }
+
     .sidebar {
       flex: 1;
       width: auto !important; /* over the desktop's resizable width, set inline */
@@ -546,7 +576,7 @@
   .icon-btn {
     background: none;
     border: none;
-    color: #6b7290;
+    color: #9095ac;
     cursor: pointer;
     padding: 4px;
     border-radius: 4px;
@@ -584,7 +614,7 @@
     font-weight: 700;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #6b7290;
+    color: #9095ac;
     cursor: default;
     user-select: none;
   }
@@ -600,7 +630,7 @@
     padding: 6px 8px;
     border: none;
     background: none;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 15px;
     cursor: pointer;
     border-radius: 4px;
@@ -617,11 +647,11 @@
     top: 50%;
     right: 10px;
     display: flex;
-    padding: 3px;
+    padding: 4px; /* with the icon, a 24px target */
     border: none;
     border-radius: 4px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     opacity: 0;
     transform: translateY(-50%);
     cursor: pointer;
@@ -642,7 +672,7 @@
   .ch-icon {
     display: flex;
     flex-shrink: 0;
-    color: #4a5168;
+    color: #8e96af;
     transition: color 0.1s;
   }
   .channel-row:hover .ch-icon { color: #c8cde8; }
@@ -660,11 +690,13 @@
   .ch-muted {
     display: flex;
     flex-shrink: 0;
-    color: #6b7290;
+    color: #9095ac;
   }
 
-  .voice-channel.in-voice { color: #a78bfa; }
-  .voice-channel.in-voice .ch-icon { color: #a78bfa; }
+  /* Connected to this call. Once it's also the open view, the highlighted row's own colours are the
+     ones that read against its background (the purple falls short of that, most of all on hover). */
+  .voice-channel.in-voice:not(.active) { color: #a78bfa; }
+  .voice-channel.in-voice:not(.active) .ch-icon { color: #a78bfa; }
 
   /* ── Inline create input ── */
   .create-row {
@@ -698,23 +730,30 @@
     gap: 2px;
   }
 
-  .participant {
+  .participant-row {
     display: flex;
     align-items: center;
     gap: 6px;
+    width: 100%;
     padding: 2px 8px 2px 6px;
     border-radius: 4px;
   }
 
-  .participant.clickable {
+  /* Someone else's row is a button that opens their volume menu. */
+  button.participant-row {
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
     cursor: pointer;
     transition: background 0.1s;
   }
 
-  .participant.clickable:hover,
-  .participant.clickable:focus-visible { background: #2d3058; }
+  button.participant-row:hover,
+  button.participant-row:focus-visible { background: #2d3058; }
 
-  .participant.clickable:focus-visible { outline: 2px solid #7c5cbf; outline-offset: -2px; }
+  button.participant-row:focus-visible { outline: 2px solid #7c5cbf; outline-offset: -2px; }
 
   .participant-avatar {
     width: 20px;
@@ -737,7 +776,7 @@
 
   .participant-name {
     font-size: 13px;
-    color: #6b7290;
+    color: #9095ac;
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -750,7 +789,7 @@
   .status-icon {
     display: flex;
     flex-shrink: 0;
-    color: #8a90b4;
+    color: #8e94b7;
   }
 
   /* ── Voice connection panel ── */
@@ -791,7 +830,7 @@
 
   .voice-channel-name {
     font-size: 12px;
-    color: #8a90b4;
+    color: #8e94b7;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -819,7 +858,7 @@
   .icon-btn.sharing { color: #fff; background: #5b40c2; }
   .icon-btn.sharing:hover { background: #6d50d6; }
   .icon-btn[aria-disabled="true"] { opacity: 0.45; cursor: not-allowed; }
-  .icon-btn[aria-disabled="true"]:hover { color: #6b7290; background: none; }
+  .icon-btn[aria-disabled="true"]:hover { color: #9095ac; background: none; }
 
   .icon-btn.disconnect,
   .icon-btn.disconnect:hover { color: #c8cde8; }

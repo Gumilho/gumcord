@@ -9,7 +9,8 @@ export const tooltip: Action<HTMLElement, string> = (node, initial) => {
     if (!text || tip) return;
     tip = document.createElement("div");
     tip.className = "gc-tooltip";
-    tip.setAttribute("role", "tooltip");
+    // Only shows what the control's own label already says, so screen readers needn't hear it twice.
+    tip.setAttribute("aria-hidden", "true");
     tip.textContent = text;
     document.body.appendChild(tip);
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -14,6 +15,7 @@ var db *sql.DB
 
 func initDB(dataDir string) {
 	var err error
+	backupDir = filepath.Join(dataDir, "backups")
 	// WAL lets reads run alongside a write; busy_timeout makes concurrent writers wait instead of failing.
 	dsn := "file:" + filepath.Join(dataDir, "gumcord.db") +
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
@@ -96,6 +98,15 @@ func migrate() {
 	var version int
 	if err := conn.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		log.Fatal(err)
+	}
+	// An upgrade is the likeliest thing to damage data, so keep a copy of what it started from.
+	// (Version 0 is a new, empty database, or one from before migrations were numbered.)
+	if version > 0 && version < len(migrations) {
+		path, err := backupDB("pre-migration-v" + strconv.Itoa(version) + "-")
+		if err != nil {
+			log.Fatalf("backup before migrating: %v", err)
+		}
+		log.Printf("database backed up to %s before migrating", path)
 	}
 	for i := version; i < len(migrations); i++ {
 		// Rebuilding a table means dropping one that others reference, which enforcement would refuse.

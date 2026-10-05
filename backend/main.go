@@ -25,8 +25,8 @@ import (
 )
 
 var (
-	lkAPIKey    = mustEnv("LK_API_KEY")
-	lkAPISecret = mustEnv("LK_API_SECRET")
+	lkAPIKey    string
+	lkAPISecret string
 	uploadDir   string
 )
 
@@ -46,6 +46,7 @@ func mustEnv(key string) string {
 }
 
 func main() {
+	lkAPIKey, lkAPISecret = mustEnv("LK_API_KEY"), mustEnv("LK_API_SECRET")
 	dataDir := envOr("DATA_DIR", "data")
 	uploadDir = filepath.Join(dataDir, "uploads")
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
@@ -54,6 +55,46 @@ func main() {
 	initDB(dataDir)
 	initAuth(dataDir)
 
+	mux := routes()
+
+	// Rejects cross-site form posts and fetches, which would otherwise ride the session cookie.
+	csrf := http.NewCrossOriginProtection()
+	if publicURL != "" {
+		if err := csrf.AddTrustedOrigin(publicURL); err != nil {
+			log.Fatalf("PUBLIC_URL: %v", err)
+		}
+	}
+
+	// Stops on SIGINT/SIGTERM: shuts the server down cleanly so SQLite checkpoints its WAL.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go runPresence(ctx)
+	backupEvery, backupKeep := backupSettings()
+	go runBackups(ctx, backupEvery, backupKeep)
+
+	addr := envOr("ADDR", ":8080")
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           secureHeaders(limitBodies(csrf.Handler(mux))),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+	go func() {
+		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+	log.Printf("backend listening on %s", addr)
+
+	<-ctx.Done()
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	srv.Shutdown(shutdown)
+	db.Close()
+}
+
+// routes is every endpoint the backend serves, without the middleware main wraps around them.
+func routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/auth/login", handleLogin)
 	mux.HandleFunc("GET /api/auth/callback", handleCallback)
@@ -105,39 +146,7 @@ func main() {
 	if dir := os.Getenv("STATIC_DIR"); dir != "" {
 		mux.Handle("GET /", serveApp(dir))
 	}
-
-	// Rejects cross-site form posts and fetches, which would otherwise ride the session cookie.
-	csrf := http.NewCrossOriginProtection()
-	if publicURL != "" {
-		if err := csrf.AddTrustedOrigin(publicURL); err != nil {
-			log.Fatalf("PUBLIC_URL: %v", err)
-		}
-	}
-
-	// Stops on SIGINT/SIGTERM: shuts the server down cleanly so SQLite checkpoints its WAL.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go runPresence(ctx)
-
-	addr := envOr("ADDR", ":8080")
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           secureHeaders(limitBodies(csrf.Handler(mux))),
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-	}
-	go func() {
-		if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
-		}
-	}()
-	log.Printf("backend listening on %s", addr)
-
-	<-ctx.Done()
-	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	srv.Shutdown(shutdown)
-	db.Close()
+	return mux
 }
 
 // --- helpers ---

@@ -1,16 +1,17 @@
 <script lang="ts">
-  import { store } from "$lib/store.svelte.ts";
+  import { userAudio } from "$lib/userAudio.svelte.ts";
+  import { dialogFocus } from "$lib/focus.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
   // Per-person volume and mute for someone's voice, or for their screen-share audio when opened on a stream.
   const MENU_W = 232;
   const MENU_H = 150;
 
-  const menu = $derived(store.userMenu);
+  const menu = $derived(userAudio.menu);
   const stream = $derived(menu?.kind === "stream");
   const audio = $derived.by(() => {
     if (!menu) return null;
-    const a = store.userAudioFor(menu.identity);
+    const a = userAudio.get(menu.identity);
     return stream ? { volume: a.streamVolume, muted: a.streamMuted } : { volume: a.volume, muted: a.muted };
   });
   const percent = $derived(audio ? Math.round(audio.volume * 100) : 100);
@@ -21,17 +22,17 @@
   });
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === "Escape") store.closeUserMenu(); }} />
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") userAudio.closeMenu(); }} />
 
 {#if menu && audio && pos}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
     class="overlay"
-    onclick={() => store.closeUserMenu()}
-    oncontextmenu={(e) => { e.preventDefault(); store.closeUserMenu(); }}
+    onclick={() => userAudio.closeMenu()}
+    oncontextmenu={(e) => { e.preventDefault(); userAudio.closeMenu(); }}
   ></div>
-  <div class="menu" role="menu" aria-label={t(stream ? "Stream settings for {name}" : "Voice settings for {name}", { name: menu.name })} style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
+  <div class="menu" role="dialog" use:dialogFocus={{ first: "input[type=range]" }} aria-label={t(stream ? "Stream settings for {name}" : "Voice settings for {name}", { name: menu.name })} style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
     <div class="name">{menu.name}</div>
 
     <div class="volume">
@@ -39,7 +40,7 @@
         <span>{t(stream ? "Stream Volume" : "User Volume")}</span>
         <span class="value">
           {#if percent !== 100}
-            <button class="reset" type="button" onclick={() => store.setUserVolume(menu.identity, 1, menu.kind)}>{t("Reset")}</button>
+            <button class="reset" type="button" onclick={() => userAudio.setVolume(menu.identity, 1, menu.kind)}>{t("Reset")}</button>
           {/if}
           {percent}%
         </span>
@@ -53,7 +54,7 @@
         disabled={audio.muted}
         aria-label={t(stream ? "Stream volume for {name}" : "Volume for {name}", { name: menu.name })}
         style="--fill: {percent / 2}%"
-        oninput={(e) => store.setUserVolume(menu.identity, Number(e.currentTarget.value) / 100, menu.kind)}
+        oninput={(e) => userAudio.setVolume(menu.identity, Number(e.currentTarget.value) / 100, menu.kind)}
       />
     </div>
 
@@ -62,9 +63,8 @@
     <button
       class="item"
       type="button"
-      role="menuitemcheckbox"
-      aria-checked={audio.muted}
-      onclick={() => store.toggleUserMute(menu.identity, menu.kind)}
+      aria-pressed={audio.muted}
+      onclick={() => userAudio.toggleMute(menu.identity, menu.kind)}
     >
       <span>{t(stream ? "Mute Stream" : "Mute")}</span>
       <span class="check" class:on={audio.muted} aria-hidden="true">

@@ -1,4 +1,6 @@
-import { isDesktop, store, type Keybind, type KeybindAction } from "./store.svelte.ts";
+import { prefs, type Keybind, type KeybindAction } from "./prefs.svelte.ts";
+import { isDesktop } from "./session.svelte.ts";
+import { voice } from "./voice.svelte.ts";
 
 // Keyboard shortcuts for mute, deafen and push-to-talk. In a browser they work while Gumcord has
 // focus; the desktop app also registers them system-wide, so they work while you're in a game.
@@ -39,11 +41,11 @@ function typing(e: KeyboardEvent) {
 }
 
 function run(action: KeybindAction, pressed: boolean) {
-  if (store.recordingKeybind || !store.room) return;
+  if (prefs.recordingKeybind || !voice.room) return;
   if (action === "pushToTalk") {
-    if (store.keybinds.pushToTalk) store.pushToTalk(pressed);
+    if (prefs.keybinds.pushToTalk) voice.pushToTalk(pressed);
   } else if (pressed) {
-    void (action === "toggleMute" ? store.toggleMute() : store.toggleDeafen());
+    void (action === "toggleMute" ? voice.toggleMute() : voice.toggleDeafen());
   }
 }
 
@@ -64,7 +66,7 @@ function accelerator(b: Keybind) {
 async function registerGlobal() {
   if (!isDesktop || !tauriInvoke) return;
   const shortcuts = ACTIONS.flatMap((action) => {
-    const b = store.keybinds.binds[action];
+    const b = prefs.keybinds.binds[action];
     return b && !isMouse(b.code) ? [{ action, accelerator: accelerator(b) }] : [];
   });
   try {
@@ -82,7 +84,7 @@ async function registerGlobal() {
 export function installShortcuts() {
   const down = (e: KeyboardEvent) => {
     for (const action of ACTIONS) {
-      const b = store.keybinds.binds[action];
+      const b = prefs.keybinds.binds[action];
       if (!matches(b, e)) continue;
       if (typing(e) && !b.ctrl && !b.alt && !b.meta) return; // a plain key in a text field is typing
       e.preventDefault();
@@ -92,25 +94,25 @@ export function installShortcuts() {
     }
   };
   const up = (e: KeyboardEvent) => {
-    const b = store.keybinds.binds.pushToTalk;
+    const b = prefs.keybinds.binds.pushToTalk;
     if (b && e.code === b.code && !global.has("pushToTalk")) run("pushToTalk", false);
   };
   // Letting go of the key in another window never reaches this one: don't stay on air.
   const blur = () => {
-    if (!global.has("pushToTalk")) store.pushToTalk(false);
+    if (!global.has("pushToTalk")) voice.pushToTalk(false);
   };
   // Mouse buttons only work in the window: the shell can't take them system-wide.
   const mouseDown = (e: MouseEvent) => {
     if (!bindableButton(e.button)) return;
     for (const action of ACTIONS) {
-      if (!matches(store.keybinds.binds[action], e)) continue;
+      if (!matches(prefs.keybinds.binds[action], e)) continue;
       e.preventDefault(); // no autoscroll, no back/forward navigation
       run(action, true);
       return;
     }
   };
   const mouseUp = (e: MouseEvent) => {
-    const b = store.keybinds.binds.pushToTalk;
+    const b = prefs.keybinds.binds.pushToTalk;
     if (!bindableButton(e.button) || !b || b.code !== `Mouse${e.button}`) return;
     e.preventDefault();
     run("pushToTalk", false);
@@ -126,7 +128,7 @@ export function installShortcuts() {
     (action, state) => run(action, state === "pressed");
   const stopEffects = $effect.root(() => {
     $effect(() => {
-      void JSON.stringify(store.keybinds); // re-register whenever a binding changes
+      void JSON.stringify(prefs.keybinds); // re-register whenever a binding changes
       void registerGlobal();
     });
   });

@@ -1,6 +1,10 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { store } from '$lib/store.svelte.ts';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { app } from '$lib/app.svelte.ts';
+  import { chat } from '$lib/chat.svelte.ts';
+  import { session } from '$lib/session.svelte.ts';
+  import { ui } from '$lib/ui.svelte.ts';
+  import { voice } from '$lib/voice.svelte.ts';
   import Login from '$lib/components/Login.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
@@ -9,22 +13,31 @@
   import ServerRail from '$lib/components/ServerRail.svelte';
   import { installShortcuts } from '$lib/shortcuts.svelte.ts';
   import { t } from '$lib/i18n.svelte.ts';
-  import { dragStart, mobile } from '$lib/mobile.svelte.ts';
+  import { dragStart, mobile, showMain } from '$lib/mobile.svelte.ts';
 
   onMount(() => {
-    void store.boot();
+    void app.boot();
     return installShortcuts();
   });
-  onDestroy(() => store.destroy());
+  onDestroy(() => app.destroy());
 
   // An expanded call takes the whole window on a larger screen; a phone already shows it alone.
-  const callFills = $derived(store.callExpanded && !mobile.narrow && store.mainView === "call" && !!store.room);
+  const callFills = $derived(ui.callExpanded && !mobile.narrow && ui.mainView === "call" && !!voice.room);
+
+  // For the keyboard: past the server and channel lists to the chat or call. On a phone that
+  // means bringing it forward first.
+  async function skipToMain(e: MouseEvent) {
+    e.preventDefault();
+    showMain();
+    await tick();
+    document.getElementById("main")?.focus();
+  }
 
   const SPLASH_MIN_MS = 1000;
 
   // The splash lives in app.html so it paints before JS; hide it once there's something to show.
   $effect(() => {
-    if (!store.booted && !store.bootError && !store.signedOut) return;
+    if (!session.booted && !session.bootError && !session.signedOut) return;
     const splash = document.getElementById("splash");
     if (!splash || splash.dataset.hiding) return;
     splash.dataset.hiding = "1";
@@ -37,14 +50,15 @@
   });
 </script>
 
-{#if store.bootError}
+{#if session.bootError}
   <div class="boot-error">
-    <p>{store.bootError}</p>
-    <button onclick={() => store.boot()}>{t("Retry")}</button>
+    <p>{session.bootError}</p>
+    <button onclick={() => app.boot()}>{t("Retry")}</button>
   </div>
-{:else if store.signedOut}
+{:else if session.signedOut}
   <Login />
-{:else if store.me}
+{:else if session.me}
+  <a class="skip-link" href="#main" onclick={skipToMain}>{t("Skip to main content")}</a>
   <!-- On a phone the chat or call slides over the channel list, following a sideways drag. The
        drags are shortcuts: the back button and the channel list do the same with a tap. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -52,7 +66,7 @@
     class="app"
     class:show-nav={mobile.pane === "nav"}
     class:dragging={mobile.drag !== null}
-    ontouchstart={(e) => dragStart(e, !!(store.activeChannel || store.room))}
+    ontouchstart={(e) => dragStart(e, !!(chat.activeChannel || voice.room))}
   >
     <!-- Just the server list and sidebar side by side on a larger screen. -->
     <div class="nav-pane" class:hidden={callFills} inert={mobile.narrow && mobile.pane === "main" && mobile.drag === null}>
@@ -60,11 +74,13 @@
       <Sidebar />
     </div>
     <main
+      id="main"
+      tabindex="-1"
       class="main"
       inert={mobile.narrow && mobile.pane === "nav" && mobile.drag === null}
       style:transform={mobile.drag !== null ? `translateX(${mobile.drag}px)` : undefined}
     >
-      {#if store.mainView === "call" && store.room}
+      {#if ui.mainView === "call" && voice.room}
         <CallPanel />
       {:else}
         <ChatPanel />
@@ -119,6 +135,9 @@
     flex-direction: column;
     overflow: hidden;
   }
+
+  /* Focused only by the skip link, and only to move the keyboard here: nothing to outline. */
+  .main:focus { outline: none; }
 
   .boot-error {
     height: 100vh;

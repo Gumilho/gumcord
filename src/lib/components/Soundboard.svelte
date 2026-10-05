@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { store, type Sound } from "$lib/store.svelte.ts";
+  import { dialogFocus } from "$lib/focus.ts";
+  import { prefs } from "$lib/prefs.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import { soundboard } from "$lib/soundboard.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
+  import type { Sound } from "$lib/types.ts";
   import { clipDuration, MAX_CLIP_SECONDS, playClip } from "$lib/sounds.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { t } from "$lib/i18n.svelte.ts";
@@ -32,7 +37,7 @@
   onMount(place);
 
   function play(sound: Sound) {
-    store.playSoundboard(sound);
+    soundboard.play(sound);
     played = sound.id;
     clearTimeout(playedTimer);
     playedTimer = setTimeout(() => (played = null), 400);
@@ -70,7 +75,7 @@
     e.preventDefault();
     if (!adding) return;
     busy = true;
-    error = await store.addItem("sounds", newName.trim(), adding.file);
+    error = await soundboard.add(newName.trim(), adding.file);
     busy = false;
     if (!error) stopAdding();
   }
@@ -81,7 +86,7 @@
       return;
     }
     confirming = null;
-    error = await store.removeItem("sounds", sound);
+    error = await soundboard.remove(sound);
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -102,16 +107,16 @@
   onpaste={(e) => void startAdding(pastedFile(e, isAudio))}
 />
 
-<div class="soundboard" role="dialog" aria-label={t("Soundboard")} bind:this={panel} style:left="{pos.left}px" style:bottom="{pos.bottom}px" style:width="{WIDTH}px">
+<div class="soundboard" role="dialog" aria-label={t("Soundboard")} use:dialogFocus={{ trap: false }} bind:this={panel} style:left="{pos.left}px" style:bottom="{pos.bottom}px" style:width="{WIDTH}px">
   <div class="top">
-    <h3>{t("Soundboard")} <span>{store.voiceServer?.name ?? ""}</span></h3>
+    <h3>{t("Soundboard")} <span>{voice.server?.name ?? ""}</span></h3>
     <input type="file" hidden accept="audio/mpeg,audio/ogg,audio/wav,.mp3,.ogg,.wav" bind:this={fileInput} onchange={(e) => startAdding(chosenFile(e))} />
     <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t("Add sound")}</button>
   </div>
 
   {#if adding}
     <form class="adding" onsubmit={save}>
-      <button class="icon" type="button" aria-label={t("Listen")} title={t("Listen")} onclick={() => adding && playClip(adding.url, store.soundboardVolume)}>
+      <button class="icon" type="button" aria-label={t("Listen")} title={t("Listen")} onclick={() => adding && playClip(adding.url, prefs.soundboardVolume)}>
         <Icon name="speaker" size={16} />
       </button>
       <input bind:value={newName} maxlength="32" placeholder={t("name")} aria-label={t("Sound name")} />
@@ -120,19 +125,19 @@
     </form>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
-  {#if store.voiceDeafened}<p class="note">{t("You're deafened: you won't hear sounds, but others will.")}</p>{/if}
+  {#if voice.deafened}<p class="note">{t("You're deafened: you won't hear sounds, but others will.")}</p>{/if}
 
-  {#if store.sounds.length === 0}
-    <p class="empty">{t("No sounds in {server} yet. Add the first one!", { server: store.voiceServer?.name ?? t("this server") })}</p>
+  {#if soundboard.sounds.length === 0}
+    <p class="empty">{t("No sounds in {server} yet. Add the first one!", { server: voice.server?.name ?? t("this server") })}</p>
   {:else}
     <div class="grid">
-      {#each store.sounds as sound (sound.id)}
+      {#each soundboard.sounds as sound (sound.id)}
         <div class="tile" class:played={played === sound.id}>
           <button class="play" type="button" title={t("Play for everyone in the call")} onclick={() => play(sound)}>{sound.name}</button>
-          <button class="icon preview" type="button" aria-label={t("Listen to {name}", { name: sound.name })} title={t("Only you hear it")} onclick={() => store.previewSound(sound)}>
+          <button class="icon preview" type="button" aria-label={t("Listen to {name}", { name: sound.name })} title={t("Only you hear it")} onclick={() => soundboard.preview(sound)}>
             <Icon name="speaker" size={14} />
           </button>
-          {#if store.canRemove(sound)}
+          {#if session.canRemove(sound)}
             <button
               class="icon remove"
               class:confirming={confirming === sound.id}
@@ -155,10 +160,10 @@
       type="range"
       min="0"
       max="100"
-      value={Math.round(store.soundboardVolume * 100)}
-      oninput={(e) => store.setSoundboardVolume(Number(e.currentTarget.value) / 100)}
+      value={Math.round(prefs.soundboardVolume * 100)}
+      oninput={(e) => prefs.setSoundboardVolume(Number(e.currentTarget.value) / 100)}
     />
-    <span class="pct">{Math.round(store.soundboardVolume * 100)}%</span>
+    <span class="pct">{Math.round(prefs.soundboardVolume * 100)}%</span>
   </label>
 </div>
 
@@ -195,7 +200,7 @@
   }
 
   h3 span {
-    color: #6b7290;
+    color: #9095ac;
     font-weight: 400;
   }
 
@@ -290,7 +295,7 @@
     border: none;
     border-radius: 5px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
   }
 
@@ -316,7 +321,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
   }
 
@@ -336,7 +341,7 @@
     font-size: 12px;
   }
 
-  .empty { color: #8a90b4; padding: 8px 0; }
+  .empty { color: #8e94b7; padding: 8px 0; }
   .note { color: #fbbf24; }
   .error { color: #f87171; }
 </style>

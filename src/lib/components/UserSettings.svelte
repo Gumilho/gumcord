@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { isDesktop, store, type AudioDeviceKind, type KeybindAction, type NoiseSuppression } from "$lib/store.svelte.ts";
+  import { prefs, type AudioDeviceKind, type KeybindAction, type NoiseSuppression } from "$lib/prefs.svelte.ts";
+  import { isDesktop, session } from "$lib/session.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
   import { keybindFromEvent, keybindLabel, systemWide } from "$lib/shortcuts.svelte.ts";
   import { i18n, LANGUAGES, setLang, t, type Lang } from "$lib/i18n.svelte.ts";
   import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
@@ -14,7 +16,7 @@
 
   // ── Profile ──
   // svelte-ignore state_referenced_locally
-  let name = $state(store.me?.name ?? "");
+  let name = $state(session.me?.name ?? "");
   let profileError = $state("");
   let busy = $state(false);
   let photoInput: HTMLInputElement | null = $state(null);
@@ -23,17 +25,17 @@
     busy = true;
     profileError = await action;
     busy = false;
-    if (!profileError) name = store.me?.name ?? name;
+    if (!profileError) name = session.me?.name ?? name;
   }
 
   function saveName(e: SubmitEvent) {
     e.preventDefault();
-    if (name.trim()) void run(store.updateName(name.trim()));
+    if (name.trim()) void run(session.updateName(name.trim()));
   }
 
   // A picture chosen with "Change photo", or pasted while the settings are open.
   function usePhoto(file: File | null) {
-    if (file) void run(store.setAvatar(file));
+    if (file) void run(session.setAvatar(file));
   }
 
   // ── Keybinds ──
@@ -45,17 +47,17 @@
   let recording: KeybindAction | null = $state(null);
 
   function setBind(action: KeybindAction, bind: ReturnType<typeof keybindFromEvent>) {
-    store.setKeybinds({ ...store.keybinds, binds: { ...store.keybinds.binds, [action]: bind } });
+    voice.setKeybinds({ ...prefs.keybinds, binds: { ...prefs.keybinds.binds, [action]: bind } });
   }
 
   function startRecording(action: KeybindAction) {
     recording = action;
-    store.recordingKeybind = true;
+    prefs.recordingKeybind = true;
   }
 
   function stopRecording() {
     recording = null;
-    store.recordingKeybind = false;
+    prefs.recordingKeybind = false;
   }
 
   // Captures the next key or mouse button for the row being changed; Escape cancels.
@@ -111,7 +113,7 @@
 
   // A saved device that's been unplugged shows as the default, which is what gets used.
   function selected(kind: AudioDeviceKind) {
-    const saved = store.devices[kind];
+    const saved = prefs.devices[kind];
     return saved && options(kind).some((o) => o.id === saved) ? saved : "default";
   }
 
@@ -122,7 +124,7 @@
   ];
   // Strong needs audio worklets; without them it falls back to standard, so that's what shows.
   const noiseLevels = NOISE_LEVELS.filter((l) => l.id !== "strong" || canSuppressNoise);
-  const noiseLevel = $derived(noiseLevels.find((l) => l.id === store.noiseSuppression) ?? NOISE_LEVELS[1]);
+  const noiseLevel = $derived(noiseLevels.find((l) => l.id === prefs.noiseSuppression) ?? NOISE_LEVELS[1]);
 </script>
 
 <svelte:window onkeydowncapture={onRecordKey} onmousedowncapture={onRecordKey} onpaste={(e) => usePhoto(pastedFile(e, isImage))} />
@@ -131,11 +133,11 @@
   <section>
     <h3>{t("Profile")}</h3>
     <div class="profile">
-      <div class="big-avatar"><UserAvatar name={store.me?.name ?? ""} src={store.me?.avatar} /></div>
+      <div class="big-avatar"><UserAvatar name={session.me?.name ?? ""} src={session.me?.avatar} /></div>
       <div class="photo-actions">
         <input type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden bind:this={photoInput} onchange={(e) => usePhoto(chosenFile(e))} />
         <button class="primary" type="button" disabled={busy} onclick={() => photoInput?.click()}>{t("Change photo")}</button>
-        <button class="link" type="button" disabled={busy} onclick={() => run(store.resetAvatar())}>{t("Use my PocketID photo")}</button>
+        <button class="link" type="button" disabled={busy} onclick={() => run(session.resetAvatar())}>{t("Use my PocketID photo")}</button>
         <span class="hint">{t("or paste a picture")}</span>
       </div>
     </div>
@@ -144,9 +146,9 @@
         <span>{t("Display name")}</span>
         <input bind:value={name} maxlength="32" />
       </label>
-      <button class="primary" type="submit" disabled={busy || !name.trim() || name.trim() === store.me?.name}>{t("Save")}</button>
+      <button class="primary" type="submit" disabled={busy || !name.trim() || name.trim() === session.me?.name}>{t("Save")}</button>
     </form>
-    <button class="link" type="button" disabled={busy} onclick={() => run(store.updateName(""))}>{t("Use my PocketID name")}</button>
+    <button class="link" type="button" disabled={busy} onclick={() => run(session.updateName(""))}>{t("Use my PocketID name")}</button>
     {#if profileError}<p class="error">{profileError}</p>{/if}
   </section>
 
@@ -164,15 +166,15 @@
   <section>
     <h3>{t("Keybinds")}</h3>
     <div class="modes" role="radiogroup" aria-label={t("Input mode")}>
-      <label><input type="radio" name="mode" checked={!store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: false })} /> {t("Voice activity")}</label>
-      <label><input type="radio" name="mode" checked={store.keybinds.pushToTalk} onchange={() => store.setKeybinds({ ...store.keybinds, pushToTalk: true })} /> {t("Push to talk")}</label>
+      <label><input type="radio" name="mode" checked={!prefs.keybinds.pushToTalk} onchange={() => voice.setKeybinds({ ...prefs.keybinds, pushToTalk: false })} /> {t("Voice activity")}</label>
+      <label><input type="radio" name="mode" checked={prefs.keybinds.pushToTalk} onchange={() => voice.setKeybinds({ ...prefs.keybinds, pushToTalk: true })} /> {t("Push to talk")}</label>
     </div>
-    {#if store.keybinds.pushToTalk && !store.keybinds.binds.pushToTalk}
+    {#if prefs.keybinds.pushToTalk && !prefs.keybinds.binds.pushToTalk}
       <p class="error">{t("Pick a push-to-talk key below: until then your microphone stays silent.")}</p>
     {/if}
     <ul class="binds">
       {#each KEYBIND_ROWS as row (row.action)}
-        {@const bind = store.keybinds.binds[row.action]}
+        {@const bind = prefs.keybinds.binds[row.action]}
         <li>
           <span class="bind-name">{t(row.label)}</span>
           <kbd class:recording={recording === row.action}>
@@ -196,7 +198,7 @@
     <h3>{t("Voice")}</h3>
     <label class="field">
       <span>{t("Microphone")}</span>
-      <select value={selected("audioinput")} onchange={(e) => store.setDevice("audioinput", e.currentTarget.value)}>
+      <select value={selected("audioinput")} onchange={(e) => voice.setDevice("audioinput", e.currentTarget.value)}>
         {#each options("audioinput") as o (o.id)}
           <option value={o.id}>{o.label}</option>
         {/each}
@@ -205,7 +207,7 @@
 
     <label class="field">
       <span>{t("Noise suppression")}</span>
-      <select value={noiseLevel.id} onchange={(e) => store.setNoiseSuppression(e.currentTarget.value as NoiseSuppression)}>
+      <select value={noiseLevel.id} onchange={(e) => voice.setNoiseSuppression(e.currentTarget.value as NoiseSuppression)}>
         {#each noiseLevels as l (l.id)}
           <option value={l.id}>{t(l.label)}</option>
         {/each}
@@ -214,7 +216,7 @@
     <p class="hint">{t(noiseLevel.hint)}</p>
 
     {#if noiseLevel.id === "strong"}
-      {@const percent = Math.round(store.noiseStrength * 100)}
+      {@const percent = Math.round(prefs.noiseStrength * 100)}
       <label class="strength">
         <span>{t("Strength")}</span>
         <input
@@ -222,7 +224,7 @@
           min="0"
           max="100"
           value={percent}
-          oninput={(e) => store.setNoiseStrength(Number(e.currentTarget.value) / 100)}
+          oninput={(e) => voice.setNoiseStrength(Number(e.currentTarget.value) / 100)}
         />
         <span class="pct">{percent}%</span>
       </label>
@@ -232,7 +234,7 @@
     {#if canPickOutput}
       <label class="field">
         <span>{t("Speakers")}</span>
-        <select value={selected("audiooutput")} onchange={(e) => store.setDevice("audiooutput", e.currentTarget.value)}>
+        <select value={selected("audiooutput")} onchange={(e) => voice.setDevice("audiooutput", e.currentTarget.value)}>
           {#each options("audiooutput") as o (o.id)}
             <option value={o.id}>{o.label}</option>
           {/each}
@@ -360,7 +362,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -424,7 +426,7 @@
   }
 
   .field span {
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -446,7 +448,7 @@
 
   .hint {
     margin: 0;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 13px;
   }
 

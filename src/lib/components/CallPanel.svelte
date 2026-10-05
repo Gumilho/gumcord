@@ -1,6 +1,12 @@
 <script lang="ts">
   import type { Track } from "livekit-client";
-  import { store, type ScreenStream, type VoiceParticipant } from "$lib/store.svelte.ts";
+  import { prefs } from "$lib/prefs.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import { ui } from "$lib/ui.svelte.ts";
+  import { userAudio } from "$lib/userAudio.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
+  import { personButtonLabel, personStatus } from "$lib/voice-util.ts";
+  import type { ScreenStream, VoiceParticipant } from "$lib/types.ts";
   import { tooltip } from "$lib/tooltip.ts";
   import { hue } from "$lib/avatar.ts";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -17,9 +23,9 @@
   let soundboardOpen = $state(false);
 
   // Expanded, the call fills the window: no header or member list here, no sidebars in the page.
-  const expanded = $derived(store.callExpanded && !mobile.narrow);
+  const expanded = $derived(ui.callExpanded && !mobile.narrow);
 
-  const count = $derived(store.voiceParticipants.length + store.streams.length);
+  const count = $derived(voice.participants.length + voice.streams.length);
   const cols = $derived(count <= 1 ? 1 : count <= 4 ? 2 : count <= 9 ? 3 : 4);
   const rows = $derived(Math.max(1, Math.ceil(count / cols)));
 
@@ -31,11 +37,11 @@
   let focusedId: string | null = $state(null);
   let spotlightArea: HTMLElement | null = $state(null);
   const focused = $derived(
-    store.streams.find((s) => s.identity === focusedId && (s.track || s.loading)) ?? null,
+    voice.streams.find((s) => s.identity === focusedId && (s.track || s.loading)) ?? null,
   );
-  const watched = $derived(store.streams.filter((s) => !s.local && (s.track || s.loading)));
+  const watched = $derived(voice.streams.filter((s) => !s.local && (s.track || s.loading)));
   const featured = $derived(focused ? [focused] : watched);
-  const tiledStreams = $derived(store.streams.filter((s) => !featured.includes(s)));
+  const tiledStreams = $derived(voice.streams.filter((s) => !featured.includes(s)));
 
   function toggleFocus(s: ScreenStream) {
     focusedId = focusedId === s.identity ? null : s.identity;
@@ -43,7 +49,7 @@
 
   // Opting in to a stream puts it on the stage, next to any others you're watching.
   function watch(s: ScreenStream) {
-    store.watchStream(s.identity);
+    voice.watchStream(s.identity);
     focusedId = null;
   }
 
@@ -51,7 +57,7 @@
   function stopWatching(s: ScreenStream) {
     const fs = document.fullscreenElement;
     if (fs && !(fs === spotlightArea && watched.some((w) => w !== s))) void document.exitFullscreen();
-    store.stopWatching(s.identity);
+    voice.stopWatching(s.identity);
   }
 
   function attachVideo(node: HTMLVideoElement, track: Track) {
@@ -88,26 +94,26 @@
     <header class="call-header">
       <BackButton />
       <span class="header-icon"><Icon name="speaker" /></span>
-      <span class="header-title">{store.voiceChannel?.name}</span>
+      <h1 class="header-title">{voice.channel?.name}</h1>
       <MemberListToggle />
     </header>
   {/if}
 
   {#snippet personTile(p: VoiceParticipant)}
-    {@const clickable = !store.isMe(p.identity)}
+    {@const clickable = !session.isMe(p.identity)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div
       class="tile"
-      class:speaking={store.speaking.has(p.identity)}
+      class:speaking={voice.speaking.has(p.identity)}
       class:clickable
       style="--hue: {hue(p.name)}"
       role={clickable ? "button" : undefined}
       tabindex={clickable ? 0 : undefined}
-      aria-label={clickable ? t("Voice settings for {name}", { name: p.name }) : undefined}
-      onclick={(e) => store.openUserMenu(e, p)}
-      oncontextmenu={(e) => store.openUserMenu(e, p)}
-      onkeydown={(e) => store.openUserMenu(e, p)}
+      aria-label={clickable ? personButtonLabel(p.name, personStatus(p, userAudio.get(p.identity).muted)) : undefined}
+      onclick={(e) => userAudio.openMenu(e, p)}
+      oncontextmenu={(e) => userAudio.openMenu(e, p)}
+      onkeydown={(e) => userAudio.openMenu(e, p)}
     >
       <!-- Camera video will render here; the avatar is the no-video fallback. -->
       <div class="tile-media">
@@ -115,7 +121,7 @@
       </div>
       <div class="tile-label">
         <span class="tile-name">{p.name}</span>
-        {#if store.userAudioFor(p.identity).muted}
+        {#if userAudio.get(p.identity).muted}
           <span class="tile-icon muted-by-me" role="img" aria-label={t("Muted for you")}><VoiceIcon kind="mic" slashed size={16} /></span>
         {:else if p.muted}
           <span class="tile-icon" role="img" aria-label={t("Muted")}><VoiceIcon kind="mic" slashed size={16} /></span>
@@ -128,7 +134,7 @@
   {/snippet}
 
   {#snippet streamTile(s: ScreenStream, spotlight: boolean)}
-    {@const streamMuted = !s.local && store.userAudioFor(s.identity).streamMuted}
+    {@const streamMuted = !s.local && userAudio.get(s.identity).streamMuted}
     {@const isFocused = focused === s}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
@@ -136,7 +142,7 @@
       class:spotlight
       class:focused={isFocused}
       style="--hue: {hue(s.name)}"
-      oncontextmenu={(e) => { if (!s.local) store.openUserMenu(e, s, "stream"); }}
+      oncontextmenu={(e) => { if (!s.local) userAudio.openMenu(e, s, "stream"); }}
     >
       {#if s.track}
         <!-- svelte-ignore a11y_media_has_caption -->
@@ -151,7 +157,7 @@
         {/if}
         <div class="tile-actions">
           {#if !s.local}
-            <button class="tile-action" aria-label={t("Stream volume")} use:tooltip={t("Stream volume")} onclick={(e) => store.openUserMenu(e, s, "stream")}>
+            <button class="tile-action" aria-label={t("Stream volume")} use:tooltip={t("Stream volume")} onclick={(e) => userAudio.openMenu(e, s, "stream")}>
               <Icon name={streamMuted ? "volumeOff" : "speaker"} />
             </button>
             <button class="tile-action" aria-label={t("Stop watching")} use:tooltip={t("Stop watching")} onclick={() => stopWatching(s)}>
@@ -197,7 +203,7 @@
           {#each tiledStreams as s (s.identity)}
             {@render streamTile(s, false)}
           {/each}
-          {#each store.voiceParticipants as p (p.identity)}
+          {#each voice.participants as p (p.identity)}
             {@render personTile(p)}
           {/each}
         </div>
@@ -210,12 +216,12 @@
           </button>
           <button
             class="ctrl"
-            class:sharing={store.screenSharing}
-            aria-disabled={!store.canScreenShare}
-            aria-pressed={store.screenSharing}
-            aria-label={store.shareLabel}
-            use:tooltip={store.shareLabel}
-            onclick={() => store.toggleScreenShare()}
+            class:sharing={voice.screenSharing}
+            aria-disabled={!voice.canScreenShare}
+            aria-pressed={voice.screenSharing}
+            aria-label={voice.shareLabel}
+            use:tooltip={voice.shareLabel}
+            onclick={() => voice.toggleScreenShare()}
           >
             <Icon name="screenShare" size={24} />
           </button>
@@ -237,25 +243,25 @@
 
           <button
             class="ctrl"
-            class:off={store.voiceMuted}
-            aria-label={store.muteLabel}
-            aria-pressed={store.voiceMuted}
-            use:tooltip={store.muteLabel}
-            onclick={() => store.toggleMute()}
+            class:off={voice.muted}
+            aria-label={voice.muteLabel}
+            aria-pressed={voice.muted}
+            use:tooltip={voice.muteLabel}
+            onclick={() => voice.toggleMute()}
           >
-            <VoiceIcon kind="mic" slashed={store.voiceMuted} size={24} />
+            <VoiceIcon kind="mic" slashed={voice.muted} size={24} />
           </button>
           <button
             class="ctrl"
-            class:off={store.voiceDeafened}
-            aria-label={store.deafenLabel}
-            aria-pressed={store.voiceDeafened}
-            use:tooltip={store.deafenLabel}
-            onclick={() => store.toggleDeafen()}
+            class:off={voice.deafened}
+            aria-label={voice.deafenLabel}
+            aria-pressed={voice.deafened}
+            use:tooltip={voice.deafenLabel}
+            onclick={() => voice.toggleDeafen()}
           >
-            <VoiceIcon kind="headphones" slashed={store.voiceDeafened} size={24} />
+            <VoiceIcon kind="headphones" slashed={voice.deafened} size={24} />
           </button>
-          <button class="ctrl hangup" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => store.leaveVoice()}>
+          <button class="ctrl hangup" aria-label={t("Disconnect")} use:tooltip={t("Disconnect")} onclick={() => voice.leave()}>
             <Icon name="hangup" size={24} />
           </button>
         </div>
@@ -263,16 +269,16 @@
           <button
             class="ctrl-side"
             aria-label={t("Hide sidebars")}
-            aria-pressed={store.callExpanded}
-            use:tooltip={t(store.callExpanded ? "Show sidebars" : "Hide sidebars")}
-            onclick={() => (store.callExpanded = !store.callExpanded)}
+            aria-pressed={ui.callExpanded}
+            use:tooltip={t(ui.callExpanded ? "Show sidebars" : "Hide sidebars")}
+            onclick={() => (ui.callExpanded = !ui.callExpanded)}
           >
-            <Icon name={store.callExpanded ? "collapse" : "expand"} size={22} />
+            <Icon name={ui.callExpanded ? "collapse" : "expand"} size={22} />
           </button>
         {/if}
       </div>
     </div>
-    {#if store.showMembers && !expanded}
+    {#if prefs.showMembers && !expanded}
       <MemberList />
     {/if}
   </div>
@@ -303,10 +309,12 @@
 
   .header-icon {
     display: flex;
-    color: #8a90b4;
+    color: #8e94b7;
   }
 
   .header-title {
+    margin: 0;
+    font: inherit;
     flex: 1;
     min-width: 0;
     overflow: hidden;
@@ -642,7 +650,7 @@
     border: none;
     border-radius: 8px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }

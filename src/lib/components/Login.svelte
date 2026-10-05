@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { isDesktop as desktop, store } from "$lib/store.svelte.ts";
+  import { app } from "$lib/app.svelte.ts";
+  import { isDesktop as desktop, session } from "$lib/session.svelte.ts";
   import { t } from "$lib/i18n.svelte.ts";
 
   // The web app only lands here after signing out. The desktop app signs in through the system browser
@@ -42,7 +43,7 @@
     stopPolling();
     error = "";
     if (!desktop) {
-      store.signIn();
+      session.signIn();
       return;
     }
     const start = prepared;
@@ -79,7 +80,7 @@
       }
       if (res.ok && (await res.json()).status === "done") {
         stopPolling();
-        await store.boot();
+        await app.boot();
         return;
       }
     } catch {
@@ -89,7 +90,7 @@
   }
 </script>
 
-<div class="login-wrap">
+<main class="login-wrap">
   <div class="login-box">
     <img class="login-logo" src="/icon.svg" alt="" />
     <h1>Gumcord</h1>
@@ -109,10 +110,10 @@
     {/if}
 
     {#if error}
-      <p class="login-error">{error}</p>
+      <p class="login-error" role="alert">{error}</p>
     {/if}
   </div>
-</div>
+</main>
 
 <style>
   .login-wrap {
@@ -151,7 +152,7 @@
 
   .login-sub {
     margin: 0 0 20px;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 13px;
     text-align: center;
   }

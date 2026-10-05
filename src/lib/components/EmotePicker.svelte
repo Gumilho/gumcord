@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { store, type Emote, type ServerItem } from "$lib/store.svelte.ts";
+  import { chat } from "$lib/chat.svelte.ts";
+  import { dialogFocus } from "$lib/focus.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import { session } from "$lib/session.svelte.ts";
+  import type { Emote, ServerItem } from "$lib/types.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { t } from "$lib/i18n.svelte.ts";
   import { chosenFile, isImage, pastedFile } from "$lib/files.ts";
@@ -20,7 +24,7 @@
   let picker: HTMLElement | null = $state(null);
 
   const emotes = $derived(tab === "emotes");
-  const items = $derived(emotes ? store.emotes : store.stickers);
+  const items = $derived(emotes ? servers.emotes : servers.stickers);
   const shown = $derived(items.filter((e) => e.name.toLowerCase().includes(search.trim().toLowerCase())));
   // Emote names are written in messages, so they're letters, digits and _; sticker names are just labels.
   const nameOk = $derived(emotes ? /^[A-Za-z0-9_]{2,32}$/.test(newName.trim()) : !!newName.trim());
@@ -59,7 +63,7 @@
     e.preventDefault();
     if (!adding) return;
     busy = true;
-    error = await store.addItem(tab, newName.trim(), adding.file);
+    error = await servers.addItem(tab, newName.trim(), adding.file);
     busy = false;
     if (!error) stopAdding();
   }
@@ -70,12 +74,12 @@
       return;
     }
     confirming = null;
-    error = await store.removeItem(tab, item);
+    error = await servers.removeItem(tab, item);
   }
 
   function pick(item: ServerItem, e: MouseEvent) {
     if (emotes) return onpick(item, e.shiftKey);
-    store.sendSticker(item);
+    chat.sendSticker(item);
     if (!e.shiftKey) onclose();
   }
 
@@ -83,10 +87,6 @@
   function onPointerDown(e: PointerEvent) {
     const target = e.target as Element;
     if (!picker?.contains(target) && !target.closest?.(".emote-btn")) onclose();
-  }
-
-  function focusSearch(node: HTMLInputElement) {
-    node.focus();
   }
 
   onDestroy(stopAdding);
@@ -98,14 +98,14 @@
   onpaste={(e) => startAdding(pastedFile(e, isImage))}
 />
 
-<div class="picker" role="dialog" aria-label={t("Emotes and stickers")} bind:this={picker}>
+<div class="picker" role="dialog" aria-label={t("Emotes and stickers")} bind:this={picker} use:dialogFocus={{ first: ".search", trap: false }}>
   <div class="tabs" role="tablist">
     <button type="button" role="tab" aria-selected={emotes} onclick={() => switchTab("emotes")}>{t("Emotes")}</button>
     <button type="button" role="tab" aria-selected={!emotes} onclick={() => switchTab("stickers")}>{t("Stickers")}</button>
   </div>
 
   <div class="top">
-    <input class="search" placeholder={t(emotes ? "Find an emote" : "Find a sticker")} aria-label={t(emotes ? "Find an emote" : "Find a sticker")} bind:value={search} {@attach focusSearch} />
+    <input class="search" placeholder={t(emotes ? "Find an emote" : "Find a sticker")} aria-label={t(emotes ? "Find an emote" : "Find a sticker")} bind:value={search} />
     <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp" bind:this={fileInput} onchange={(e) => startAdding(chosenFile(e))} />
     <button class="add-btn" type="button" onclick={() => fileInput?.click()}>{t(emotes ? "Add emote" : "Add sticker")}</button>
   </div>
@@ -122,7 +122,7 @@
   {#if error}<p class="error">{error}</p>{/if}
 
   {#if items.length === 0}
-    <p class="empty">{t(emotes ? "No emotes in {server} yet. Add the first one!" : "No stickers in {server} yet. Add the first one!", { server: store.activeServer?.name ?? t("this server") })}</p>
+    <p class="empty">{t(emotes ? "No emotes in {server} yet. Add the first one!" : "No stickers in {server} yet. Add the first one!", { server: servers.active?.name ?? t("this server") })}</p>
   {:else if shown.length === 0}
     <p class="empty">{t(emotes ? "No emotes match “{search}”." : "No stickers match “{search}”.", { search: search.trim() })}</p>
   {:else}
@@ -133,7 +133,7 @@
           <button class="pick" type="button" title={label} onclick={(e) => pick(item, e)}>
             <img src={item.url} alt={label} loading="lazy" />
           </button>
-          {#if store.canRemove(item)}
+          {#if session.canRemove(item)}
             <button
               class="remove"
               class:confirming={confirming === item.id}
@@ -274,7 +274,7 @@
     border: none;
     border-radius: 5px;
     background: none;
-    color: #8a90b4;
+    color: #8e94b7;
     font: 600 13px system-ui, sans-serif;
     cursor: pointer;
   }
@@ -307,7 +307,7 @@
     font-size: 12px;
   }
 
-  .empty { color: #8a90b4; padding: 8px 0; }
-  .hint { color: #5c6283; }
+  .empty { color: #8e94b7; padding: 8px 0; }
+  .hint { color: #9095b1; }
   .error { color: #f87171; }
 </style>

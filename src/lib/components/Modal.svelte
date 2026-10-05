@@ -1,13 +1,12 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { dialogFocus } from "$lib/focus.ts";
 
-  // A centred dialog over a dimmed backdrop. Escape or a click outside closes it.
+  // A centred dialog over a dimmed backdrop. Escape or a click outside closes it. The keyboard lands
+  // on its first control (not a hidden file input), stays inside while it's open, and goes back to
+  // where it was when it closes.
   let { title, onclose, children }: { title: string; onclose: () => void; children: Snippet } = $props();
-
-  // Focus the dialog's first field, so the keyboard lands in it.
-  function focusFirst(node: HTMLElement) {
-    node.querySelector<HTMLElement>("input, select, button")?.focus();
-  }
+  const titleId = $props.id();
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") onclose(); }} />
@@ -15,8 +14,8 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="backdrop" onclick={onclose}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" onclick={(e) => e.stopPropagation()} use:focusFirst>
-    <h2>{title}</h2>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabindex="-1" onclick={(e) => e.stopPropagation()} use:dialogFocus>
+    <h2 id={titleId}>{title}</h2>
     {@render children()}
   </div>
 </div>

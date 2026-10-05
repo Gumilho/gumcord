@@ -69,6 +69,44 @@
         border-bottom-color: #0f1020;
       }
 
+      /* Hidden from the eye, still read aloud by screen readers. */
+      .sr-only {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        margin: -1px;
+        padding: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      /* The first thing the keyboard reaches: jumps past the server and channel lists. */
+      .skip-link {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        z-index: 2000;
+        padding: 8px 14px;
+        border-radius: 6px;
+        background: #5b40c2;
+        color: #fff;
+        font-weight: 700;
+        transform: translateY(-200%);
+      }
+      .skip-link:focus { transform: none; }
+
+      /* People who ask for less motion get none: sliding panes, fading, pulsing. */
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
+
       /* Shared by the sidebar member list and call-view stream tiles. */
       .live-badge {
         flex-shrink: 0;
@@ -107,7 +145,7 @@
         justify-content: center;
         gap: 20px;
         background: #1a1b2e;
-        color: #6b7290;
+        color: #9095ac;
         font: 600 13px system-ui, sans-serif;
         letter-spacing: 0.08em;
         text-transform: uppercase;

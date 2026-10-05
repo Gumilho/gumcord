@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { store, type Channel } from "$lib/store.svelte.ts";
+  import { chat } from "$lib/chat.svelte.ts";
+  import type { Channel } from "$lib/types.ts";
   import { t } from "$lib/i18n.svelte.ts";
   import Modal from "$lib/components/Modal.svelte";
 
@@ -15,7 +16,7 @@
   async function rename(e: SubmitEvent) {
     e.preventDefault();
     if (!name.trim() || name.trim() === channel.name) return;
-    error = await store.renameChannel(channel.id, name.trim());
+    error = await chat.renameChannel(channel.id, name.trim());
     if (!error) onclose();
   }
 
@@ -24,7 +25,7 @@
       confirmDelete = true;
       return;
     }
-    error = await store.deleteChannel(channel.id);
+    error = await chat.deleteChannel(channel.id);
     if (!error) onclose();
   }
 </script>
@@ -67,7 +68,7 @@
   }
 
   .field span {
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -119,7 +120,7 @@
 
   .hint {
     margin: 0;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 13px;
   }
 

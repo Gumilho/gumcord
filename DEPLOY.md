@@ -89,7 +89,20 @@ Gumcord and LiveKit only need to be reached through NetBird. Out of the box, Doc
 
 ## Backups and updates
 
-- **Back up `data/`.** It holds the database, uploads, and `session.key`, which signs sessions; losing it signs everyone out. For a consistent copy while the app runs: `sqlite3 data/gumcord.db ".backup gumcord-backup.db"`.
+- **Automatic backups.** Gumcord writes a consistent snapshot of the database to `data/backups/` once a day (`auto-<date>-<time>.db`) and keeps the newest 7. Change that with `BACKUP_INTERVAL` (a duration such as `6h`, or `off`) and `BACKUP_KEEP` in `.env`. The first snapshot is taken when it starts, unless one is recent enough.
+- **Before an upgrade changes the database,** it saves a copy as `data/backups/pre-migration-v<N>-<date>-<time>.db`. These are never deleted automatically. Remove them once the new version has proved itself.
+- **Copy backups off the machine.** `data/backups/` is on the same disk as the database, so it protects against a bad upgrade or a corrupted file, not a dead disk. Sync the whole `data/` folder somewhere else (restic, rsync, a cloud drive): it holds the database, the snapshots, the uploads, and `session.key`, which signs sessions; losing that key signs everyone out. Uploads never change once saved, so an incremental copy of `data/uploads/` is cheap.
+- **Don't copy `gumcord.db` while the app is running.** In WAL mode a plain copy can capture a half-written state. Use a snapshot from `data/backups/`, or `sqlite3 data/gumcord.db ".backup somewhere.db"`.
+- **Restore:** stop Gumcord, put the snapshot in place of the database, and start it again. The old `-wal` and `-shm` files must go too:
+
+  ```sh
+  docker compose stop gumcord
+  cp data/backups/auto-20260101-030000.db data/gumcord.db
+  rm -f data/gumcord.db-wal data/gumcord.db-shm
+  docker compose start gumcord
+  ```
+
+  Messages after the snapshot are lost. Uploads sent after it stay in `data/uploads/` but nothing points at them.
 - **Update:** `git pull && docker compose up -d --build`. Browsers and desktop apps pick up the new version on their next reload.
 
 ## Desktop app
@@ -122,4 +135,5 @@ npm run dev                               # or: npm run tauri dev
 
 - **`backend/.env`** needs `LK_API_KEY` and `LK_API_SECRET`, plus `DEV_LOGIN=1` to sign in with any name.
 - **Vite** proxies `/api`, `/files` and `/rtc`, so development uses the same URLs as production.
+- **Tests:** `make test` runs the backend tests, the web unit tests and the type check, without a browser or Docker. `make e2e` and `make a11y` drive the real app in Chromium against a throwaway backend and LiveKit (they need Docker and Chromium; see `e2e/README.md`).
 - **Real PocketID sign-in in development:** set `PUBLIC_URL=http://localhost:1420` and `OIDC_*` instead of `DEV_LOGIN`.

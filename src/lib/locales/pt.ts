@@ -1,6 +1,11 @@
 // Portuguese (Brazil). Keys are the English text as written in the code.
 export const pt: Record<string, string> = {
   // ── General ──
+  "Skip to main content": "Pular para o conteúdo principal",
+  "Sidebar": "Barra lateral",
+  "Channels": "Canais",
+  "Channel menu": "Menu do canal",
+  "Messages": "Mensagens",
   "Save": "Salvar",
   "Cancel": "Cancelar",
   "Add": "Adicionar",
@@ -70,6 +75,9 @@ export const pt: Record<string, string> = {
   "Muted": "Microfone desativado",
   "Muted for you": "Silenciado para você",
   "Deafened": "Áudio desativado",
+  "muted": "microfone desativado",
+  "muted for you": "silenciado para você",
+  "deafened": "áudio desativado",
   "Voice Connected": "Voz conectada",
   "Click to enable audio": "Clique para ativar o áudio",
   "Connection: {quality}": "Conexão: {quality}",

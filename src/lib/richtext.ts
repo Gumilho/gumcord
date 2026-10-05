@@ -1,5 +1,5 @@
 // A message's text as pieces to show: plain text, links and the server's emotes.
-import type { Emote } from "./store.svelte.ts";
+import type { Emote } from "./types.ts";
 
 export type Piece =
   | { kind: "text"; text: string }

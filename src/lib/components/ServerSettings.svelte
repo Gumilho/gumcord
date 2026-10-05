@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { store, type Server, type User } from "$lib/store.svelte.ts";
+  import { servers } from "$lib/servers.svelte.ts";
+  import type { Server, User } from "$lib/types.ts";
   import { t } from "$lib/i18n.svelte.ts";
   import Modal from "$lib/components/Modal.svelte";
   import UserAvatar from "$lib/components/UserAvatar.svelte";
@@ -18,12 +19,12 @@
   let error = $state("");
   let confirmDelete = $state(false);
 
-  const members = $derived(store.activeServer?.id === server.id ? store.members : []);
+  const members = $derived(servers.active?.id === server.id ? servers.members : []);
   // People who have signed in but aren't in this server yet.
   const addable = $derived(everyone.filter((u) => !members.some((m) => m.id === u.id)));
 
   onMount(async () => {
-    everyone = await store.allUsers();
+    everyone = await servers.allUsers();
   });
 
   async function run(action: Promise<string>) {
@@ -35,16 +36,16 @@
 
   // A picture chosen with "Change image", or pasted while the settings are open.
   function useIcon(file: File | null) {
-    if (file) void run(store.setServerIcon(server.id, file));
+    if (file) void run(servers.setIcon(server.id, file));
   }
 
   async function rename(e: SubmitEvent) {
     e.preventDefault();
-    if (name.trim() && name.trim() !== server.name) await run(store.renameServer(server.id, name.trim()));
+    if (name.trim() && name.trim() !== server.name) await run(servers.rename(server.id, name.trim()));
   }
 
   async function add() {
-    if (adding && (await run(store.addMember(server.id, Number(adding))))) adding = "";
+    if (adding && (await run(servers.addMember(server.id, Number(adding))))) adding = "";
   }
 
   async function remove() {
@@ -52,7 +53,7 @@
       confirmDelete = true;
       return;
     }
-    if (await run(store.deleteServer(server.id))) onclose();
+    if (await run(servers.delete(server.id))) onclose();
   }
 </script>
 
@@ -67,7 +68,7 @@
       <input type="file" hidden accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" bind:this={iconInput} onchange={(e) => useIcon(chosenFile(e))} />
       <button class="primary" type="button" onclick={() => iconInput?.click()}>{t("Change image")}</button>
       {#if server.icon}
-        <button class="link" type="button" onclick={() => run(store.removeServerIcon(server.id))}>{t("Remove image")}</button>
+        <button class="link" type="button" onclick={() => run(servers.removeIcon(server.id))}>{t("Remove image")}</button>
       {/if}
       <span class="hint">{t("or paste a picture")}</span>
     </div>
@@ -89,7 +90,7 @@
           <div class="avatar"><UserAvatar name={m.name} src={m.avatar} /></div>
           <span class="name">{m.name}</span>
           {#if m.admin}<span class="badge">{t("Admin")}</span>{/if}
-          <button class="link danger" type="button" onclick={() => run(store.removeMember(server.id, m.id))}>{t("Remove")}</button>
+          <button class="link danger" type="button" onclick={() => run(servers.removeMember(server.id, m.id))}>{t("Remove")}</button>
         </li>
       {/each}
     </ul>
@@ -163,7 +164,7 @@
   .field span,
   h3 {
     margin: 0;
-    color: #8a90b4;
+    color: #8e94b7;
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -273,7 +274,7 @@
 
   .hint {
     margin: 0;
-    color: #6b7290;
+    color: #9095ac;
     font-size: 13px;
   }
 
