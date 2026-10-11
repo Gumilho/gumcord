@@ -2,10 +2,15 @@
   import { userAudio } from "$lib/userAudio.svelte.ts";
   import { dialogFocus } from "$lib/focus.ts";
   import { t } from "$lib/i18n.svelte.ts";
+  import { voice } from "$lib/voice.svelte.ts";
+  import { ui } from "$lib/ui.svelte.ts";
+  import { showMain } from "$lib/mobile.svelte.ts";
+  import Icon from "$lib/components/Icon.svelte";
 
   // Per-person volume and mute for someone's voice, or for their screen-share audio when opened on a stream.
   const MENU_W = 232;
   const MENU_H = 150;
+  const WATCH_H = 40;
 
   const menu = $derived(userAudio.menu);
   const stream = $derived(menu?.kind === "stream");
@@ -14,11 +19,21 @@
     const a = userAudio.get(menu.identity);
     return stream ? { volume: a.streamVolume, muted: a.streamMuted } : { volume: a.volume, muted: a.muted };
   });
+  // Someone in your call who is sharing their screen: the menu offers to go and watch it.
+  const sharing = $derived(!stream && !!menu && voice.streams.some((s) => s.identity === menu.identity && !s.local));
   const percent = $derived(audio ? Math.round(audio.volume * 100) : 100);
   // Keep the whole menu on screen.
+  function watch() {
+    if (!menu) return;
+    voice.watchStream(menu.identity);
+    ui.mainView = "call";
+    showMain();
+    userAudio.closeMenu();
+  }
+
   const pos = $derived(menu && {
     x: Math.max(8, Math.min(menu.x, window.innerWidth - MENU_W - 8)),
-    y: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H - 8)),
+    y: Math.max(8, Math.min(menu.y, window.innerHeight - MENU_H - (sharing ? WATCH_H : 0) - 8)),
   });
 </script>
 
@@ -34,6 +49,14 @@
   ></div>
   <div class="menu" role="dialog" use:dialogFocus={{ first: "input[type=range]" }} aria-label={t(stream ? "Stream settings for {name}" : "Voice settings for {name}", { name: menu.name })} style="left:{pos.x}px; top:{pos.y}px; width:{MENU_W}px">
     <div class="name">{menu.name}</div>
+
+    {#if sharing}
+      <button class="item" type="button" onclick={watch}>
+        <span>{t("Watch Stream")}</span>
+        <Icon name="eye" size={16} />
+      </button>
+      <div class="divider"></div>
+    {/if}
 
     <div class="volume">
       <div class="volume-head">
