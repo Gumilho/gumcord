@@ -1,6 +1,8 @@
 use tauri::utils::config::FrontendDist;
 use tauri::webview::{NewWindowResponse, PermissionKind, PermissionResponse};
-use tauri::{AppHandle, Manager, WebviewWindowBuilder};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
 // The only players the site embeds (see videoPlayer in the backend's embed.go).
 const VIDEO_PLAYERS: [&str; 2] = ["https://www.youtube-nocookie.com/embed/", "https://player.vimeo.com/video/"];
@@ -62,6 +64,16 @@ pub fn run() {
                 })
                 .build()?;
 
+            // Closing the window hides it to the tray, so a call keeps going; Quit in the tray menu exits.
+            let hidden = window.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = hidden.hide();
+                }
+            });
+            build_tray(app.handle())?;
+
             #[cfg(target_os = "linux")]
             enable_webrtc(&window)?;
             #[cfg(windows)]
@@ -72,6 +84,48 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn show_window(window: &WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+// The tray icon: click it to bring the window back, or right-click for Show / Quit.
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, "show", "Show Gumcord", true, None::<&str>)?,
+            &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
+        ],
+    )?;
+    let mut tray = TrayIconBuilder::new()
+        .tooltip("Gumcord")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    show_window(&window);
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                if let Some(window) = tray.app_handle().get_webview_window("main") {
+                    show_window(&window);
+                }
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
 }
 
 // The title bar in the app's colours: the window's dark theme covers Windows 10, and Windows 11
