@@ -43,6 +43,35 @@ describe("socket", () => {
     expect(events).toEqual([{ type: "online", users: [] }, { id: 1, content: "hi" }]);
   });
 
+  it("keeps a connection that keeps hearing the server's heartbeat, and doesn't pass it on", async () => {
+    const events: unknown[] = [];
+    socket.connect((e) => events.push(e));
+    last().open();
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(25_000);
+      last().receive({ type: "ping" });
+    }
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(events).toEqual([]);
+  });
+
+  it("replaces a connection that has gone silent, without waiting for the browser to notice", async () => {
+    socket.connect(() => {});
+    const first = last();
+    first.open();
+    await vi.advanceTimersByTimeAsync(70_000);
+    expect(FakeSocket.instances).toHaveLength(2);
+    expect(first.readyState).toBe(3);
+  });
+
+  it("checks a quiet connection when the window comes back", async () => {
+    socket.connect(() => {});
+    last().open();
+    vi.setSystemTime(Date.now() + 40_000); // asleep: no timers ran
+    window.dispatchEvent(new Event("focus"));
+    expect(FakeSocket.instances).toHaveLength(2);
+  });
+
   it("doesn't connect when signed out, nor twice", () => {
     session.me = null;
     socket.connect(() => {});
@@ -138,6 +167,6 @@ describe("socket", () => {
     expect(FakeSocket.instances).toHaveLength(2);
     last().open();
     last().close();
-    expect(vi.getTimerCount()).toBe(1); // reconnecting again
+    expect(vi.getTimerCount()).toBe(2); // reconnecting again, and the watchdog
   });
 });

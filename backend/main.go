@@ -246,6 +246,8 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 
 const wsPingInterval = 25 * time.Second
 
+var heartbeatMsg = []byte(`{"type":"ping"}`)
+
 func handleWS(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	if !sameOrigin(r) {
@@ -270,9 +272,7 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	// Who's online and who's in voice right now; later changes arrive as broadcasts.
 	hub.send(conn, hub.onlineMsgFor(u))
-	if snap := presence.snapshotFor(u); snap != nil {
-		hub.send(conn, snap)
-	}
+	presence.sendSnapshot(conn, u)
 	// Keeps idle connections alive through proxies, and notices dead ones.
 	go func() {
 		t := time.NewTicker(wsPingInterval)
@@ -289,6 +289,9 @@ func handleWS(w http.ResponseWriter, r *http.Request) {
 					conn.CloseNow()
 					return
 				}
+				// Browsers answer pings without telling the page, so this is how the page learns the
+				// connection is alive; it reconnects when these stop.
+				hub.send(conn, heartbeatMsg)
 			}
 		}
 	}()

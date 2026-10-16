@@ -102,6 +102,9 @@ type presenceState struct {
 	channels map[int64][]voiceMember // the latest poll; nil when there isn't one
 	last     []byte                  // the latest poll serialized, to spot changes
 	wake     chan struct{}           // polls right away
+	// Held while a new connection reads the snapshot and sends it, and while a poll stores its result
+	// and broadcasts it: otherwise an older snapshot could reach a connection after a newer update.
+	sendMu sync.Mutex
 }
 
 var presence = &presenceState{wake: make(chan struct{}, 1)}
@@ -180,6 +183,7 @@ func runPresence(ctx context.Context) {
 		}
 
 		data, _ := json.Marshal(channels)
+		presence.sendMu.Lock()
 		presence.mu.Lock()
 		changed := !bytes.Equal(data, presence.last)
 		presence.channels, presence.last = channels, data
@@ -196,6 +200,16 @@ func runPresence(ctx context.Context) {
 				hub.send(c, msg)
 			})
 		}
+		presence.sendMu.Unlock()
+	}
+}
+
+// sendSnapshot tells a new connection who is in voice right now, if that's known yet.
+func (p *presenceState) sendSnapshot(conn *websocket.Conn, u user) {
+	p.sendMu.Lock()
+	defer p.sendMu.Unlock()
+	if snap := p.snapshotFor(u); snap != nil {
+		hub.send(conn, snap)
 	}
 }
 
