@@ -1,6 +1,6 @@
 {
   "name": "gumcord",
-  "version": "0.1.0",
+  "version": "0.3.1",
   "description": "Self-hosted chat, voice and screen sharing for a group of friends",
   "type": "module",
   "scripts": {

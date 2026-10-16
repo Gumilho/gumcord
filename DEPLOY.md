@@ -117,7 +117,7 @@ The app loads the address in `build.frontendDist` in `src-tauri/tauri.conf.json`
 
 `.github/workflows/release.yml` builds the Linux and Windows installers and publishes them as a GitHub release:
 
-1. Bump `"version"` in `src-tauri/tauri.conf.json` (for example to `0.2.0`) and commit.
+1. Bump the version (for example to `0.2.0`) in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` (and its `Cargo.lock`) and `package.json` (and its `package-lock.json`), and commit. The workflow stops if they disagree with the tag.
 2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`. The tag must be `v` plus that version, or the workflow stops.
 3. Wait about 10–15 minutes. The release stays a draft until both builds succeed, then publishes itself.
 

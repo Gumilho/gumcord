@@ -1,6 +1,7 @@
 # Builds the desktop app for Linux and Windows and publishes the installers as a GitHub release.
 #
-# To release: bump "version" in src-tauri/tauri.conf.json, commit, then tag and push:
+# To release: bump the version in src-tauri/tauri.conf.json, src-tauri/Cargo.toml (and Cargo.lock) and
+# package.json (and package-lock.json), commit, then tag and push:
 #   git tag v0.2.0 && git push origin main v0.2.0
 # The tag must be "v" + that version. The release stays a draft until every build has succeeded.
 
@@ -20,11 +21,15 @@ jobs:
       - uses: actions/checkout@v7
       - name: Tag matches the app version
         run: |
-          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in src-tauri/tauri.conf.json"
-            exit 1
-          fi
+          cargo=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n1)
+          for pair in "src-tauri/tauri.conf.json:$(node -p "require('./src-tauri/tauri.conf.json').version")" \
+                      "package.json:$(node -p "require('./package.json').version")" \
+                      "src-tauri/Cargo.toml:$cargo"; do
+            if [ "$GITHUB_REF_NAME" != "v${pair#*:}" ]; then
+              echo "::error::Tag $GITHUB_REF_NAME doesn't match version ${pair#*:} in ${pair%%:*}"
+              exit 1
+            fi
+          done
 
   build:
     needs: check-version
