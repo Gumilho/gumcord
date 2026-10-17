@@ -2,7 +2,7 @@ use tauri::utils::config::FrontendDist;
 use tauri::webview::{NewWindowResponse, PermissionKind, PermissionResponse};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WebviewWindow, WebviewWindowBuilder, WindowEvent};
+use tauri::{AppHandle, Manager, WebviewWindowBuilder, WindowEvent};
 
 // The only players the site embeds (see videoPlayer in the backend's embed.go).
 const VIDEO_PLAYERS: [&str; 2] = ["https://www.youtube-nocookie.com/embed/", "https://player.vimeo.com/video/"];
@@ -86,10 +86,12 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn show_window(window: &WebviewWindow) {
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
 
 // The tray icon: click it to bring the window back, or right-click for Show / Quit.
@@ -106,19 +108,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    show_window(&window);
-                }
-            }
+            "show" => show_main_window(app),
             "quit" => app.exit(0),
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("main") {
-                    show_window(&window);
-                }
+                show_main_window(tray.app_handle());
             }
         });
     if let Some(icon) = app.default_window_icon() {

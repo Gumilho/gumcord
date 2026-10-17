@@ -10,10 +10,9 @@ pkgdesc='Desktop app for Gumcord, a self-hosted chat, voice and screen sharing s
 arch=(x86_64)
 url='https://github.com/Gumilho/gumcord'
 license=(MIT)
-# The gst-* packages are what WebKitGTK uses for WebRTC and the microphone (voice calls don't connect
-# without them), and for the MP3 sound effects (gst-libav).
-depends=(cairo gdk-pixbuf2 glib2 gst-libav gst-plugin-pipewire gst-plugins-bad gst-plugins-good gtk3
-         libayatana-appindicator libsoup3 webkit2gtk-4.1)
+# The gst-* packages are what WebKitGTK uses for the microphone and for the MP3 sound effects (gst-libav).
+depends=(cairo gdk-pixbuf2 glib2 gst-libav gst-plugin-pipewire gst-plugins-good gtk3 libayatana-appindicator
+         libsoup3 webkit2gtk-4.1)
 makedepends=(cargo git)
 options=(!debug)
 source=("$pkgname::git+file://$(realpath "$startdir/../..")"
