@@ -164,6 +164,10 @@ fn enable_webrtc(window: &tauri::WebviewWindow) -> tauri::Result<()> {
         if let Some(settings) = WebViewExt::settings(&view) {
             settings.set_enable_media_stream(true);
             settings.set_enable_webrtc(true);
+            // GUMCORD_DEBUG=1 gumcord: prints the page's console (join errors and so on) in the terminal.
+            if std::env::var_os("GUMCORD_DEBUG").is_some() {
+                settings.set_enable_write_console_messages_to_stdout(true);
+            }
         }
         // The first page may have started loading before these settings applied; load it again with them.
         view.load_uri(url.as_str());
