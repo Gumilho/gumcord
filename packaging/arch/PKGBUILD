@@ -1,9 +1,10 @@
 # Builds the desktop app from this checkout, so it needs no release or AUR upload:
 #   cd packaging/arch && makepkg -si
 # Only committed changes are built (makepkg clones the repo); the version comes from the latest tag.
+# makepkg rewrites pkgver below each time it builds. Run `git restore PKGBUILD` before pulling.
 
 pkgname=gumcord
-pkgver=0.3.0.r16.gc4b92ee
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Desktop app for Gumcord, a self-hosted chat, voice and screen sharing server'
 arch=(x86_64)
